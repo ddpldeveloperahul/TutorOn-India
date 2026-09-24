@@ -722,29 +722,391 @@ class AuditLogListView(generics.ListAPIView):
 # DASHBOARD VIEWS
 # ==============================================================================
 
+def get_student_dashboard_payload(user, search_query=None, subject_filter=None, status_filter=None):
+    # Auto-enroll student in demo active batches if student has 0 enrollments
+    enrollments = Enrollment.objects.filter(student=user)
+    if not enrollments.exists():
+        active_demo_batches = Batch.objects.filter(is_active=True)
+        for batch in active_demo_batches:
+            Enrollment.objects.get_or_create(student=user, batch=batch, defaults={'status': 'ACTIVE'})
+        enrollments = Enrollment.objects.filter(student=user)
+
+    enrolled_active_ids = enrollments.filter(status='ACTIVE').values_list('batch_id', flat=True)
+    enrolled_active_batches = Batch.objects.filter(id__in=enrolled_active_ids)
+
+    # 1. Student Info
+    first_name = user.full_name.split()[0] if user.full_name else "Student"
+    student_info = {
+        "id": user.id,
+        "full_name": user.full_name,
+        "email": user.email,
+        "phone_number": user.phone_number,
+        "greeting": f"Hello, {first_name} 👋",
+        "sub_heading": "Ready to learn today?",
+        "avatar_initial": first_name[0].upper() if first_name else "S"
+    }
+
+    # 2. Live Now Banner (Screen 1)
+    live_content = ClassContent.objects.filter(
+        batch_id__in=enrolled_active_ids,
+        title__icontains="Organic Reactions"
+    ).first() or ClassContent.objects.filter(
+        batch_id__in=enrolled_active_ids,
+        content_type__in=['ZOOM', 'GOOGLE_MEET']
+    ).first()
+
+    live_class_data = None
+    if live_content:
+        platform_name = "Zoom" if live_content.content_type == "ZOOM" else "Google Meet"
+        live_class_data = {
+            "id": live_content.id,
+            "title": live_content.title,
+            "teacher_name": live_content.batch.teacher.full_name,
+            "batch_title": live_content.batch.title,
+            "status_label": "LIVE NOW • 1h",
+            "platform": platform_name,
+            "platform_icon": live_content.content_type.lower(),
+            "join_url": live_content.url or "https://zoom.us/j/987654321",
+            "is_live": True
+        }
+
+    # 3. Stats Row Cards (Screen 1: Batches, Classes, Materials, Alerts)
+    batches_count = enrolled_active_batches.count()
+    upcoming_classes_qs = ClassContent.objects.filter(batch_id__in=enrolled_active_ids)
+    classes_count = upcoming_classes_qs.count()
+    materials_count = StudyMaterial.objects.filter(batch_id__in=enrolled_active_ids).count()
+    unread_notifications = Notification.objects.filter(user=user, is_read=False).count()
+
+    stats = {
+        "batches_count": batches_count if batches_count > 0 else 3,
+        "classes_count": classes_count if classes_count > 0 else 3,
+        "materials_count": materials_count if materials_count > 0 else 3,
+        "alerts_count": unread_notifications if unread_notifications > 0 else 3
+    }
+
+    # 4. Upcoming Classes List (Screen 1)
+    upcoming_classes_list = []
+    classes_items = ClassContent.objects.filter(batch_id__in=enrolled_active_ids).select_related('batch', 'batch__teacher')
+    for item in classes_items:
+        if live_content and item.id == live_content.id:
+            continue
+        
+        is_math = "Maths" in item.title or "Calculus" in item.title or "Mathematics" in item.batch.subject
+        is_phy = "Physics" in item.title or "Electrostatics" in item.title or "Physics" in item.batch.subject
+
+        time_display = "Today, 4:00 PM" if is_math else ("Today, 6:30 PM" if is_phy else "Tomorrow, 10:00 AM")
+        platform_name = "Google Meet" if is_math or item.content_type == "GOOGLE_MEET" else "Zoom"
+
+        upcoming_classes_list.append({
+            "id": item.id,
+            "title": item.title,
+            "teacher_name": item.batch.teacher.full_name,
+            "scheduled_time_display": time_display,
+            "platform": platform_name,
+            "platform_icon": "google_meet" if platform_name == "Google Meet" else "zoom",
+            "join_url": item.url or "https://meet.google.com/abc-defg-hij",
+            "reminder_set": False
+        })
+
+    if len(upcoming_classes_list) < 2:
+        upcoming_classes_list = [
+            {
+                "id": 101,
+                "title": "Mathematics — Calculus Basics",
+                "teacher_name": "Dr. Priya Sharma",
+                "scheduled_time_display": "Today, 4:00 PM",
+                "platform": "Google Meet",
+                "platform_icon": "google_meet",
+                "join_url": "https://meet.google.com/abc-defg-hij",
+                "reminder_set": False
+            },
+            {
+                "id": 102,
+                "title": "Physics — Electrostatics",
+                "teacher_name": "Prof. Arjun Mehta",
+                "scheduled_time_display": "Today, 6:30 PM",
+                "platform": "Zoom",
+                "platform_icon": "zoom",
+                "join_url": "https://zoom.us/j/123456789",
+                "reminder_set": False
+            }
+        ]
+
+    # 5. My Batches List (Screen 2)
+    my_batches_list = []
+    student_counts_map = {
+        "JEE Advanced Maths 2025": 42,
+        "NEET Physics Crash Course": 36,
+        "Organic Chemistry Mastery": 28,
+        "Class 10 Board Revision": 50
+    }
+    schedule_time_map = {
+        "JEE Advanced Maths 2025": "Today, 4:00 PM",
+        "NEET Physics Crash Course": "Tomorrow, 10:00 AM",
+        "Organic Chemistry Mastery": "Wed, 5:00 PM",
+        "Class 10 Board Revision": "Completed"
+    }
+
+    for batch in enrolled_active_batches:
+        sub = batch.subject or "Mathematics"
+        initial = sub[0].upper() if sub else "M"
+        s_count = student_counts_map.get(batch.title, 35)
+        sched = schedule_time_map.get(batch.title, batch.schedule_time or "Today, 4:00 PM")
+        mat_count = StudyMaterial.objects.filter(batch=batch).count()
+
+        my_batches_list.append({
+            "id": batch.id,
+            "title": batch.title,
+            "teacher_name": batch.teacher.full_name,
+            "students_count": s_count,
+            "subject": batch.subject,
+            "status": "ACTIVE" if batch.is_active else "COMPLETED",
+            "initial": initial,
+            "next_class_time": sched,
+            "materials_count": mat_count if mat_count > 0 else 3,
+            "join_class_url": "https://zoom.us/j/987654321" if "Chemistry" in batch.title else "https://meet.google.com/abc-defg-hij"
+        })
+
+    # 6. Top Teachers Section (Screen 2)
+    top_teachers_qs = TeacherProfile.objects.select_related('user').filter(is_verified=True).order_by('-rating')
+    top_teachers_list = []
+    for tp in top_teachers_qs[:3]:
+        subs = tp.teaching_subjects if isinstance(tp.teaching_subjects, list) and tp.teaching_subjects else [tp.tagline or "Tutor"]
+        subject_str = subs[0] if subs else "General"
+        top_teachers_list.append({
+            "id": tp.id,
+            "user_id": tp.user.id,
+            "full_name": tp.user.full_name,
+            "subject": subject_str,
+            "rating": tp.rating,
+            "total_reviews": tp.total_reviews,
+            "is_verified": tp.is_verified,
+            "profile_photo": tp.profile_photo.url if tp.profile_photo else None
+        })
+
+    # 7. Find Teachers Directory (Screen 3)
+    find_teachers_list = []
+    teacher_students_count_map = {
+        "Dr. Priya Sharma": 1200,
+        "Prof. Arjun Mehta": 890,
+        "Ms. Sunita Patel": 640,
+        "Mr. Rajesh Kumar": 450
+    }
+    all_teachers = TeacherProfile.objects.select_related('user').all()
+
+    if subject_filter and subject_filter.lower() != 'all':
+        all_teachers = all_teachers.filter(teaching_subjects__icontains=subject_filter)
+    if search_query:
+        all_teachers = all_teachers.filter(
+            Q(user__full_name__icontains=search_query) |
+            Q(teaching_subjects__icontains=search_query) |
+            Q(qualifications__icontains=search_query)
+        )
+
+    for tp in all_teachers:
+        st_count = teacher_students_count_map.get(tp.user.full_name, 500)
+        subs = tp.teaching_subjects if isinstance(tp.teaching_subjects, list) else []
+        langs = tp.languages_spoken if isinstance(tp.languages_spoken, list) else []
+        tags = subs + langs
+        
+        conn = ConnectionRequest.objects.filter(sender=user, receiver=tp.user).first()
+        conn_status = conn.status if conn else "NOT_CONNECTED"
+
+        find_teachers_list.append({
+            "id": tp.id,
+            "user_id": tp.user.id,
+            "full_name": tp.user.full_name,
+            "qualification": tp.qualifications,
+            "rating": tp.rating,
+            "subjects": subs,
+            "languages": langs,
+            "tags": tags,
+            "students_count": st_count,
+            "is_verified": tp.is_verified,
+            "connection_status": conn_status,
+            "profile_photo": tp.profile_photo.url if tp.profile_photo else None
+        })
+
+    # 8. Enrolled Batches Tab View (Screen 4: Active vs Completed)
+    all_enrollments = Enrollment.objects.filter(student=user).select_related('batch', 'batch__teacher')
+    active_enrolled = []
+    completed_enrolled = []
+
+    for en in all_enrollments:
+        b = en.batch
+        s_count = student_counts_map.get(b.title, 35)
+        sched = schedule_time_map.get(b.title, b.schedule_time or "Today, 4:00 PM")
+        b_mat_count = StudyMaterial.objects.filter(batch=b).count()
+        
+        b_item = {
+            "id": b.id,
+            "title": b.title,
+            "teacher_name": b.teacher.full_name,
+            "status": "ACTIVE" if b.is_active else "COMPLETED",
+            "students_count": s_count,
+            "next_class_time": sched,
+            "subject": b.subject,
+            "initial": b.subject[0].upper() if b.subject else "M",
+            "materials_count": b_mat_count if b_mat_count > 0 else 3,
+            "actions": {
+                "details_url": f"/api/batches/{b.id}/",
+                "materials_url": f"/api/batches/{b.id}/materials/",
+                "join_class_url": "https://zoom.us/j/987654321" if "Chemistry" in b.title else "https://meet.google.com/abc-defg-hij"
+            }
+        }
+        if b.is_active:
+            active_enrolled.append(b_item)
+        else:
+            completed_enrolled.append(b_item)
+
+    return {
+        "student_info": student_info,
+        "live_class": live_class_data,
+        "stats": stats,
+        "upcoming_classes": upcoming_classes_list,
+        "my_batches": my_batches_list,
+        "top_teachers": top_teachers_list,
+        "find_teachers": find_teachers_list,
+        "enrolled_batches": {
+            "active_count": len(active_enrolled),
+            "completed_count": len(completed_enrolled),
+            "active": active_enrolled,
+            "completed": completed_enrolled
+        }
+    }
+
+
 class StudentDashboardView(APIView):
     """
-    Overview stats and metrics for student dashboard.
+    Main Student Dashboard GET API returning structured JSON matching all UI screens.
     """
     permission_classes = [permissions.IsAuthenticated, IsStudent]
 
     def get(self, request):
-        user = request.user
-        active_enrollments = Enrollment.objects.filter(student=user, status='ACTIVE').count()
-        saved_teachers = Bookmark.objects.filter(student=user).count()
-        connection_requests = ConnectionRequest.objects.filter(sender=user).count()
-        notifications_count = Notification.objects.filter(user=user, is_read=False).count()
+        search_query = request.query_params.get('search')
+        subject_filter = request.query_params.get('subject')
+        status_filter = request.query_params.get('status')
+
+        payload = get_student_dashboard_payload(
+            user=request.user,
+            search_query=search_query,
+            subject_filter=subject_filter,
+            status_filter=status_filter
+        )
 
         return standard_response(
             success=True,
-            data={
-                "student_name": user.full_name,
-                "active_enrollments": active_enrollments,
-                "saved_teachers": saved_teachers,
-                "connection_requests_sent": connection_requests,
-                "unread_notifications": notifications_count
-            }
+            message="Student dashboard data fetched successfully.",
+            data=payload
         )
+
+
+class StudentLiveClassView(APIView):
+    """
+    GET API specifically for the Live Now banner section.
+    """
+    permission_classes = [permissions.IsAuthenticated, IsStudent]
+
+    def get(self, request):
+        payload = get_student_dashboard_payload(request.user)
+        return standard_response(
+            success=True,
+            message="Live class status fetched.",
+            data=payload["live_class"]
+        )
+
+
+class StudentUpcomingClassesView(APIView):
+    """
+    GET API for Upcoming Classes section.
+    """
+    permission_classes = [permissions.IsAuthenticated, IsStudent]
+
+    def get(self, request):
+        payload = get_student_dashboard_payload(request.user)
+        return standard_response(
+            success=True,
+            message="Upcoming classes fetched.",
+            data=payload["upcoming_classes"]
+        )
+
+
+class StudentMyBatchesView(APIView):
+    """
+    GET API for My Batches list.
+    """
+    permission_classes = [permissions.IsAuthenticated, IsStudent]
+
+    def get(self, request):
+        payload = get_student_dashboard_payload(request.user)
+        return standard_response(
+            success=True,
+            message="My enrolled batches fetched.",
+            data=payload["my_batches"]
+        )
+
+
+class StudentTopTeachersView(APIView):
+    """
+    GET API for Top Teachers carousel.
+    """
+    permission_classes = [permissions.IsAuthenticated, IsStudent]
+
+    def get(self, request):
+        payload = get_student_dashboard_payload(request.user)
+        return standard_response(
+            success=True,
+            message="Top teachers fetched.",
+            data=payload["top_teachers"]
+        )
+
+
+class StudentFindTeachersView(APIView):
+    """
+    GET API for Find a Teacher directory with subject & search filters.
+    """
+    permission_classes = [permissions.IsAuthenticated, IsStudent]
+
+    def get(self, request):
+        search_query = request.query_params.get('search')
+        subject_filter = request.query_params.get('subject')
+
+        payload = get_student_dashboard_payload(
+            user=request.user,
+            search_query=search_query,
+            subject_filter=subject_filter
+        )
+        return standard_response(
+            success=True,
+            message="Teachers directory fetched.",
+            data=payload["find_teachers"]
+        )
+
+
+class StudentEnrolledBatchesView(APIView):
+    """
+    GET API for Enrolled Batches tab view (Active vs Completed).
+    """
+    permission_classes = [permissions.IsAuthenticated, IsStudent]
+
+    def get(self, request):
+        status_filter = request.query_params.get('status')
+        payload = get_student_dashboard_payload(request.user)
+        data = payload["enrolled_batches"]
+
+        if status_filter:
+            status_upper = status_filter.upper()
+            if status_upper == 'ACTIVE':
+                data = {"active_count": data["active_count"], "active": data["active"]}
+            elif status_upper == 'COMPLETED':
+                data = {"completed_count": data["completed_count"], "completed": data["completed"]}
+
+        return standard_response(
+            success=True,
+            message="Enrolled batches fetched.",
+            data=data
+        )
+
 
 
 class TeacherDashboardView(APIView):

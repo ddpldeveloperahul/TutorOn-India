@@ -67,7 +67,7 @@ TEMPLATES = [
 
 WSGI_APPLICATION = "Edu.wsgi.application"
 
-# Database Configuration
+# Database Configuration (SQLite default for development, PostgreSQL config ready)
 DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.sqlite3",
@@ -113,7 +113,7 @@ REST_FRAMEWORK = {
 
 # SimpleJWT Configuration
 SIMPLE_JWT = {
-    "ACCESS_TOKEN_LIFETIME": timedelta(days=int(os.getenv("JWT_ACCESS_MINUTES", 2))),
+    "ACCESS_TOKEN_LIFETIME": timedelta(days=int(os.getenv("JWT_ACCESS_DAYS", 1))),
     "REFRESH_TOKEN_LIFETIME": timedelta(days=int(os.getenv("JWT_REFRESH_DAYS", 7))),
     "ROTATE_REFRESH_TOKENS": True,
     "BLACKLIST_AFTER_ROTATION": True,
@@ -122,6 +122,22 @@ SIMPLE_JWT = {
     "SIGNING_KEY": SECRET_KEY,
     "AUTH_HEADER_TYPES": ("Bearer",),
 }
+
+
+# SIMPLE_JWT = {
+#     "ACCESS_TOKEN_LIFETIME": timedelta(days=1),
+#     "REFRESH_TOKEN_LIFETIME": timedelta(days=7),
+#     "ROTATE_REFRESH_TOKENS": True,
+#     "BLACKLIST_AFTER_ROTATION": True,
+#     "UPDATE_LAST_LOGIN": True,
+#     "ALGORITHM": "HS256",
+#     "SIGNING_KEY": SECRET_KEY,
+#     "AUTH_HEADER_TYPES": ("Bearer",),
+#     "USER_ID_FIELD": "id",
+#     "USER_ID_CLAIM": "user_id",
+#     "AUTH_TOKEN_CLASSES": ("rest_framework_simplejwt.tokens.AccessToken",),
+#     "TOKEN_TYPE_CLAIM": "token_type",
+# }
 
 # drf-spectacular OpenAPI Documentation Settings
 SPECTACULAR_SETTINGS = {

@@ -10,7 +10,9 @@ from app.views import (
     ConnectionRequestRespondView, ContactAccessRequestView, ContactAccessUnlockView,
     ConversationListView, MessageListCreateView, ReviewListCreateView,
     NotificationListView, ReportCreateView, UserBlockCreateView, PaymentListCreateView,
-    AuditLogListView, StudentDashboardView, TeacherDashboardView
+    AuditLogListView, StudentDashboardView, TeacherDashboardView,
+    StudentLiveClassView, StudentUpcomingClassesView, StudentMyBatchesView,
+    StudentTopTeachersView, StudentFindTeachersView, StudentEnrolledBatchesView
 )
 
 urlpatterns = [
@@ -60,7 +62,13 @@ urlpatterns = [
     path('payments/', PaymentListCreateView.as_view(), name='payment-list-create'),
     path('admin/audit-logs/', AuditLogListView.as_view(), name='audit-log-list'),
 
-    # User Dashboards
+    # User Dashboards & Student Dashboard Sub-Endpoints
     path('dashboard/student/', StudentDashboardView.as_view(), name='student-dashboard'),
+    path('dashboard/student/live-class/', StudentLiveClassView.as_view(), name='student-live-class'),
+    path('dashboard/student/upcoming-classes/', StudentUpcomingClassesView.as_view(), name='student-upcoming-classes'),
+    path('dashboard/student/my-batches/', StudentMyBatchesView.as_view(), name='student-my-batches'),
+    path('dashboard/student/top-teachers/', StudentTopTeachersView.as_view(), name='student-top-teachers'),
+    path('dashboard/student/find-teachers/', StudentFindTeachersView.as_view(), name='student-find-teachers'),
+    path('dashboard/student/enrolled-batches/', StudentEnrolledBatchesView.as_view(), name='student-enrolled-batches'),
     path('dashboard/teacher/', TeacherDashboardView.as_view(), name='teacher-dashboard'),
 ]

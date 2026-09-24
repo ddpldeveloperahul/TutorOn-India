@@ -1,76 +1,133 @@
 from django.core.management.base import BaseCommand
 from django.contrib.auth import get_user_model
+from django.utils import timezone
+import datetime
+
 from app.models import (
     StudentProfile, TeacherProfile, TeacherVerification, Batch,
     BatchAnnouncement, ClassContent, StudyMaterial, ConnectionRequest,
-    ContactAccess, Review
+    ContactAccess, Review, Enrollment, Notification
 )
 
 User = get_user_model()
 
+def get_or_create_user(email, phone_number, full_name, user_type, is_verified=False):
+    user = User.objects.filter(email=email).first()
+    if not user and phone_number:
+        user = User.objects.filter(phone_number=phone_number).first()
+    
+    if user:
+        user.full_name = full_name
+        user.user_type = user_type
+        user.is_verified = is_verified
+        user.save()
+        return user, False
+    else:
+        user = User.objects.create_user(
+            email=email,
+            phone_number=phone_number,
+            full_name=full_name,
+            user_type=user_type,
+            is_verified=is_verified
+        )
+        return user, True
+
 class Command(BaseCommand):
-    help = "Seeds initial demo data for TutorOn India platform testing."
+    help = "Seeds complete teacher dummy data & student dashboard data for TutorOn India."
 
     def handle(self, *args, **kwargs):
-        self.stdout.write(self.style.WARNING("Seeding demo data..."))
+        self.stdout.write(self.style.WARNING("Seeding demo data for Student Dashboard flow..."))
 
         # 1. Superuser / Admin
-        admin, created = User.objects.get_or_create(
+        admin, created = get_or_create_user(
             email="admin@tutoron.in",
-            defaults={
-                "phone_number": "9999999999",
-                "full_name": "TutorOn Admin",
-                "user_type": "ADMIN",
-                "is_staff": True,
-                "is_superuser": True,
-                "is_verified": True
-            }
+            phone_number="9999999999",
+            full_name="TutorOn Admin",
+            user_type="ADMIN",
+            is_verified=True
         )
-        if created:
-            admin.set_password("AdminPass123!")
-            admin.save()
-            self.stdout.write(self.style.SUCCESS("Created admin account: admin@tutoron.in / AdminPass123!"))
+        admin.is_staff = True
+        admin.is_superuser = True
+        admin.set_password("AdminPass123!")
+        admin.save()
+        self.stdout.write(self.style.SUCCESS("Admin ready: admin@tutoron.in"))
 
-        # 2. Sample Teachers
+        # 2. Four Teachers from Screenshots
         teachers_data = [
             {
-                "email": "rahul.teacher@tutoron.in",
-                "phone_number": "9876543210",
-                "full_name": "Rahul Sharma",
+                "email": "priya.sharma@tutoron.in",
+                "phone_number": "9876543201",
+                "full_name": "Dr. Priya Sharma",
                 "city": "New Delhi",
-                "subjects": ["Physics", "Mathematics"],
-                "qualifications": "M.Tech IIT Delhi, 8 Years Teaching Exp.",
-                "hourly_rate": 800.00,
-                "monthly_fee": 5000.00,
-                "tagline": "Top IIT-JEE Physics Specialist",
-                "bio": "Expert in simplifying complex physics concepts for Class 11-12 and JEE aspirants.",
+                "subjects": ["Mathematics"],
+                "qualifications": "PhD — IIT Delhi",
+                "hourly_rate": 900.00,
+                "monthly_fee": 6000.00,
+                "tagline": "Senior Mathematics Specialist",
+                "bio": "PhD from IIT Delhi with over 10 years of experience coaching top rankers for JEE Advanced.",
+                "languages": ["Hindi", "English"],
+                "rating": 4.9,
+                "total_reviews": 128,
                 "verified": True
             },
             {
-                "email": "priya.singh@tutoron.in",
-                "phone_number": "9876543211",
-                "full_name": "Priya Singh",
+                "email": "arjun.mehta@tutoron.in",
+                "phone_number": "9876543202",
+                "full_name": "Prof. Arjun Mehta",
                 "city": "Mumbai",
-                "subjects": ["Chemistry", "Biology"],
-                "qualifications": "M.Sc Organic Chemistry, NEET Faculty",
-                "hourly_rate": 700.00,
+                "subjects": ["Physics"],
+                "qualifications": "M.Sc — BITS Pilani",
+                "hourly_rate": 850.00,
+                "monthly_fee": 5500.00,
+                "tagline": "Physics Faculty for NEET & JEE",
+                "bio": "M.Sc from BITS Pilani. Simplified concept building approach for mechanics and electrodynamics.",
+                "languages": ["Hindi", "English"],
+                "rating": 4.7,
+                "total_reviews": 95,
+                "verified": True
+            },
+            {
+                "email": "sunita.patel@tutoron.in",
+                "phone_number": "9876543203",
+                "full_name": "Ms. Sunita Patel",
+                "city": "Ahmedabad",
+                "subjects": ["Chemistry"],
+                "qualifications": "M.Sc — DU",
+                "hourly_rate": 800.00,
+                "monthly_fee": 5000.00,
+                "tagline": "Organic Chemistry Master",
+                "bio": "M.Sc Delhi University. Specializing in Organic mechanisms and reaction tricks for Class 11 & 12.",
+                "languages": ["Hindi", "Gujarati"],
+                "rating": 4.8,
+                "total_reviews": 84,
+                "verified": True
+            },
+            {
+                "email": "rajesh.kumar@tutoron.in",
+                "phone_number": "9876543204",
+                "full_name": "Mr. Rajesh Kumar",
+                "city": "Jaipur",
+                "subjects": ["Biology"],
+                "qualifications": "MBBS — AIIMS",
+                "hourly_rate": 750.00,
                 "monthly_fee": 4500.00,
-                "tagline": "NEET Chemistry Topper Faculty",
-                "bio": "Specialized in Organic and Inorganic Chemistry with 100+ selections in NEET.",
+                "tagline": "NEET Biology Specialist",
+                "bio": "AIIMS Graduate teaching Botany and Zoology with interactive visual diagrams and NCERT focus.",
+                "languages": ["Hindi", "English"],
+                "rating": 4.6,
+                "total_reviews": 60,
                 "verified": True
             }
         ]
 
-        created_teachers = []
+        teacher_objs = {}
         for tdata in teachers_data:
-            user, t_created = User.objects.get_or_create(
+            user, t_created = get_or_create_user(
                 email=tdata["email"],
-                defaults={
-                    "phone_number": tdata["phone_number"],
-                    "full_name": tdata["full_name"],
-                    "user_type": "TEACHER",
-                    "is_verified": tdata["verified"]
-                }
+                phone_number=tdata["phone_number"],
+                full_name=tdata["full_name"],
+                user_type="TEACHER",
+                is_verified=tdata["verified"]
             )
             if t_created:
                 user.set_password("Teacher123!")
@@ -79,7 +136,7 @@ class Command(BaseCommand):
             profile, _ = TeacherProfile.objects.get_or_create(
                 user=user,
                 defaults={
-                    "gender": "MALE" if "Rahul" in user.full_name else "FEMALE",
+                    "gender": "FEMALE" if "Ms." in user.full_name or "Priya" in user.full_name else "MALE",
                     "city_location": tdata["city"],
                     "teaching_subjects": tdata["subjects"],
                     "qualifications": tdata["qualifications"],
@@ -87,92 +144,162 @@ class Command(BaseCommand):
                     "monthly_fee": tdata["monthly_fee"],
                     "tagline": tdata["tagline"],
                     "bio": tdata["bio"],
+                    "languages_spoken": tdata["languages"],
                     "is_verified": tdata["verified"],
-                    "rating": 4.9
+                    "rating": tdata["rating"],
+                    "total_reviews": tdata["total_reviews"]
                 }
             )
-            created_teachers.append(user)
-            self.stdout.write(self.style.SUCCESS(f"Teacher created: {user.email}"))
+            profile.rating = tdata["rating"]
+            profile.total_reviews = tdata["total_reviews"]
+            profile.is_verified = tdata["verified"]
+            profile.save()
 
-        # 3. Sample Students
-        students_data = [
+            teacher_objs[tdata["full_name"]] = user
+            self.stdout.write(self.style.SUCCESS(f"Teacher ready: {tdata['full_name']}"))
+
+        # 3. Default Demo Student Account
+        student_user, s_created = get_or_create_user(
+            email="student@tutoron.in",
+            phone_number="9123456700",
+            full_name="Student",
+            user_type="STUDENT",
+            is_verified=True
+        )
+        if s_created:
+            student_user.set_password("Student123!")
+            student_user.save()
+
+        student_profile, _ = StudentProfile.objects.get_or_create(
+            user=student_user,
+            defaults={
+                "student_class": "Class 12",
+                "city_location": "New Delhi",
+                "target_exams": ["JEE Advanced", "NEET"],
+                "subjects_needed": ["Mathematics", "Physics", "Chemistry"]
+            }
+        )
+        self.stdout.write(self.style.SUCCESS(f"Default Student ready: student@tutoron.in / Student123!"))
+
+        # 4. Batches from Screenshots
+        now = timezone.now()
+        batches_info = [
             {
-                "email": "rohan.student@tutoron.in",
-                "phone_number": "9123456789",
-                "full_name": "Rohan Verma",
-                "city": "New Delhi",
-                "class": "Class 12",
-                "target": ["JEE Mains", "CBSE Board"]
+                "title": "JEE Advanced Maths 2025",
+                "teacher": teacher_objs["Dr. Priya Sharma"],
+                "subject": "Mathematics",
+                "schedule_time": "Today, 4:00 PM",
+                "is_active": True,
+                "fee": 6000.00,
+                "description": "Comprehensive course for JEE Advanced Mathematics 2025."
             },
             {
-                "email": "ananya.student@tutoron.in",
-                "phone_number": "9123456788",
-                "full_name": "Ananya Patel",
-                "city": "Mumbai",
-                "class": "Class 11",
-                "target": ["NEET"]
+                "title": "NEET Physics Crash Course",
+                "teacher": teacher_objs["Prof. Arjun Mehta"],
+                "subject": "Physics",
+                "schedule_time": "Tomorrow, 10:00 AM",
+                "is_active": True,
+                "fee": 4500.00,
+                "description": "High-yield crash course for NEET Physics preparation."
+            },
+            {
+                "title": "Organic Chemistry Mastery",
+                "teacher": teacher_objs["Ms. Sunita Patel"],
+                "subject": "Chemistry",
+                "schedule_time": "Wed, 5:00 PM",
+                "is_active": True,
+                "fee": 5000.00,
+                "description": "Master all organic mechanisms, conversions and reactions."
+            },
+            {
+                "title": "Class 10 Board Revision",
+                "teacher": teacher_objs["Dr. Priya Sharma"],
+                "subject": "Mathematics",
+                "schedule_time": "Completed",
+                "is_active": False,
+                "fee": 3000.00,
+                "description": "Board revision module for Class 10 students."
             }
         ]
 
-        created_students = []
-        for sdata in students_data:
-            user, s_created = User.objects.get_or_create(
-                email=sdata["email"],
+        batch_objs = {}
+        for b_info in batches_info:
+            batch, _ = Batch.objects.get_or_create(
+                title=b_info["title"],
+                teacher=b_info["teacher"],
                 defaults={
-                    "phone_number": sdata["phone_number"],
-                    "full_name": sdata["full_name"],
-                    "user_type": "STUDENT"
+                    "subject": b_info["subject"],
+                    "schedule_time": b_info["schedule_time"],
+                    "is_active": b_info["is_active"],
+                    "fee": b_info["fee"],
+                    "description": b_info["description"]
                 }
             )
-            if s_created:
-                user.set_password("Student123!")
-                user.save()
+            batch_objs[b_info["title"]] = batch
+            # Enroll demo student
+            Enrollment.objects.get_or_create(student=student_user, batch=batch, defaults={"status": "ACTIVE" if b_info["is_active"] else "CANCELLED"})
 
-            StudentProfile.objects.get_or_create(
-                user=user,
-                defaults={
-                    "student_class": sdata["class"],
-                    "city_location": sdata["city"],
-                    "target_exams": sdata["target"]
-                }
+        # 5. Live Class & Upcoming Classes
+        # Live Class: Chemistry - Organic Reactions by Ms. Sunita Patel (LIVE NOW)
+        ClassContent.objects.get_or_create(
+            batch=batch_objs["Organic Chemistry Mastery"],
+            title="Chemistry — Organic Reactions",
+            defaults={
+                "description": "Live session covering aromatic substitution and reaction mechanisms.",
+                "content_type": "ZOOM",
+                "url": "https://zoom.us/j/987654321",
+                "scheduled_at": now - datetime.timedelta(minutes=15),
+                "duration_minutes": 60
+            }
+        )
+
+        # Upcoming Class 1: Mathematics - Calculus Basics by Dr. Priya Sharma
+        ClassContent.objects.get_or_create(
+            batch=batch_objs["JEE Advanced Maths 2025"],
+            title="Mathematics — Calculus Basics",
+            defaults={
+                "description": "Introduction to limits, continuity and derivatives.",
+                "content_type": "GOOGLE_MEET",
+                "url": "https://meet.google.com/abc-defg-hij",
+                "scheduled_at": now + datetime.timedelta(hours=2),
+                "duration_minutes": 90
+            }
+        )
+
+        # Upcoming Class 2: Physics - Electrostatics by Prof. Arjun Mehta
+        ClassContent.objects.get_or_create(
+            batch=batch_objs["NEET Physics Crash Course"],
+            title="Physics — Electrostatics",
+            defaults={
+                "description": "Electric fields, potential and Gauss's law numericals.",
+                "content_type": "ZOOM",
+                "url": "https://zoom.us/j/123456789",
+                "scheduled_at": now + datetime.timedelta(hours=4, minutes=30),
+                "duration_minutes": 60
+            }
+        )
+
+        # 6. Study Materials
+        for b_name in ["JEE Advanced Maths 2025", "NEET Physics Crash Course", "Organic Chemistry Mastery"]:
+            batch = batch_objs[b_name]
+            StudyMaterial.objects.get_or_create(
+                batch=batch,
+                title=f"{batch.subject} Complete Notes & Formula Sheet",
+                defaults={"file": "materials/sample_notes.pdf"}
             )
-            created_students.append(user)
-            self.stdout.write(self.style.SUCCESS(f"Student created: {user.email}"))
 
-        # 4. Sample Batches & Content
-        if created_teachers:
-            t1 = created_teachers[0]
-            batch, b_created = Batch.objects.get_or_create(
-                title="Class 12 Physics JEE Mains Masterclass 2026",
-                teacher=t1,
-                defaults={
-                    "description": "Complete coverage of Electrostatics, Magnetism and Optics with problem solving.",
-                    "subject": "Physics",
-                    "batch_type": "ONLINE",
-                    "fee": 5000.00
-                }
+        # 7. Unread Notifications for Student
+        notifs = [
+            ("🔴 LIVE NOW", "Chemistry — Organic Reactions is live now on Zoom! Tap to join."),
+            ("📅 Upcoming Class", "Mathematics — Calculus Basics starts today at 4:00 PM."),
+            ("📁 New Material", "New study materials added to Organic Chemistry Mastery.")
+        ]
+        for title, msg in notifs:
+            Notification.objects.get_or_create(
+                user=student_user,
+                title=title,
+                message=msg,
+                defaults={"is_read": False}
             )
-            if b_created:
-                BatchAnnouncement.objects.create(
-                    batch=batch,
-                    title="Welcome to Physics Masterclass",
-                    content="Classes will be conducted every Monday, Wednesday and Friday at 6 PM."
-                )
 
-                ClassContent.objects.create(
-                    batch=batch,
-                    title="Lecture 01: Coulomb's Law & Electric Field",
-                    content_type="YOUTUBE",
-                    url="https://www.youtube.com/watch?v=dQw4w9WgXcQ",
-                    description="Detailed explanation of Coulomb's inverse square law."
-                )
-                ClassContent.objects.create(
-                    batch=batch,
-                    title="Live Doubt Session 01",
-                    content_type="ZOOM",
-                    url="https://zoom.us/j/1234567890",
-                    description="Interactive Zoom doubt discussion."
-                )
-                self.stdout.write(self.style.SUCCESS("Created demo batch and class contents."))
-
-        self.stdout.write(self.style.SUCCESS("Demo data seeding complete!"))
+        self.stdout.write(self.style.SUCCESS("Successfully seeded all teacher dummy data & student dashboard elements!"))
