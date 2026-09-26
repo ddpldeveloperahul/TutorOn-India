@@ -1,3 +1,4 @@
+from django.core.exceptions import ValidationError as DjangoValidationError
 # pyrefly: ignore [missing-import]
 from rest_framework import serializers
 # pyrefly: ignore [missing-import]
@@ -9,7 +10,7 @@ from .models import (
     StudyMaterial, Bookmark, ConnectionRequest,
     Conversation, Message, MessageAttachment, Notification,
     Review, Report, Payment, AuditLog,
-    validate_external_url, validate_video_file
+    validate_external_url
 )
 
 # ==========================================
@@ -154,7 +155,17 @@ class PasswordResetConfirmSerializer(serializers.Serializer):
     new_password = serializers.CharField(required=True, min_length=8)
 
 class EmailVerificationSerializer(serializers.Serializer):
-    token = serializers.CharField(required=True)
+    email = serializers.EmailField(required=False)
+    otp = serializers.CharField(required=False, max_length=128)
+    token = serializers.CharField(required=False, max_length=128)
+
+    def validate(self, attrs):
+        otp_val = attrs.get('otp') or attrs.get('token')
+        if not otp_val:
+            raise serializers.ValidationError({"otp": "Verification OTP (or token) is required."})
+        attrs['otp'] = str(otp_val).strip()
+        attrs['token'] = attrs['otp']
+        return attrs
 
 class UserBlockSerializer(serializers.ModelSerializer):
     blocked_email = serializers.EmailField(source='blocked.email', read_only=True)
@@ -382,12 +393,16 @@ class EnrollmentActionSerializer(serializers.Serializer):
 class ClassContentSerializer(serializers.ModelSerializer):
     batch_title = serializers.CharField(source='batch.title', read_only=True)
     teacher_name = serializers.CharField(source='teacher.user.get_full_name', read_only=True)
+    external_url = serializers.URLField(
+        required=True,
+        help_text="Mandatory direct link for YouTube, Zoom, or Google Meet class"
+    )
 
     class Meta:
         model = ClassContent
         fields = (
             'id', 'batch', 'batch_title', 'teacher', 'teacher_name',
-            'title', 'description', 'class_type', 'video_file',
+            'title', 'description', 'class_type',
             'external_url', 'thumbnail', 'scheduled_date', 'duration',
             'order', 'is_published', 'created_at', 'updated_at'
         )
@@ -395,19 +410,31 @@ class ClassContentSerializer(serializers.ModelSerializer):
 
     def validate(self, attrs):
         class_type = attrs.get('class_type', getattr(self.instance, 'class_type', None))
-        video_file = attrs.get('video_file', getattr(self.instance, 'video_file', None))
         external_url = attrs.get('external_url', getattr(self.instance, 'external_url', None))
 
-        if class_type == ClassContent.ClassType.RECORDED_VIDEO:
-            if not video_file and not self.instance:
-                raise serializers.ValidationError({"video_file": "Video file is required for RECORDED_VIDEO."})
-            if attrs.get('video_file'):
-                validate_video_file(attrs['video_file'])
+        allowed_types = [
+            ClassContent.ClassType.YOUTUBE,
+            ClassContent.ClassType.ZOOM,
+            ClassContent.ClassType.GOOGLE_MEET
+        ]
+        if class_type and class_type not in allowed_types:
+            raise serializers.ValidationError({
+                "class_type": f"Invalid class type '{class_type}'. Platform only supports YOUTUBE, ZOOM, and GOOGLE_MEET links."
+            })
 
-        elif class_type in [ClassContent.ClassType.YOUTUBE, ClassContent.ClassType.ZOOM, ClassContent.ClassType.GOOGLE_MEET]:
-            if not external_url:
-                raise serializers.ValidationError({"external_url": f"External URL is required for {class_type}."})
-            validate_external_url(external_url, class_type)
+        if not external_url and not (self.instance and self.instance.external_url):
+            raise serializers.ValidationError({
+                "external_url": f"External link is required for {class_type or 'this class'}. Live streaming is not hosted on-platform; provide a YouTube, Zoom, or Google Meet link."
+            })
+
+        active_url = external_url or getattr(self.instance, 'external_url', None)
+        active_type = class_type or getattr(self.instance, 'class_type', None)
+        if active_url and active_type:
+            try:
+                validate_external_url(active_url, active_type)
+            except DjangoValidationError as e:
+                err_msg = e.message if hasattr(e, 'message') else str(e)
+                raise serializers.ValidationError({"external_url": err_msg})
 
         return attrs
 

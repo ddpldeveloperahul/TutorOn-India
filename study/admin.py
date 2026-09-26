@@ -1,13 +1,15 @@
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
+# pyrefly: ignore [missing-import]
 from .models import (
-    User, UserBlock, EmailVerificationToken, PasswordResetToken,
+    User, UserBlock,
     StudentProfile, TeacherProfile, TeacherVerification,
     Batch, BatchAnnouncement, Enrollment, ClassContent, Attendance,
     StudyMaterial, Bookmark, ConnectionRequest, ContactAccess,
-    Conversation, Message, MessageAttachment, Notification,
+    Conversation, Message, Notification,
     Review, Report, Payment, AuditLog
 )
+# pyrefly: ignore [missing-import]
 from .views import TeacherVerificationService, ConnectionService, EnrollmentService
 
 @admin.register(User)

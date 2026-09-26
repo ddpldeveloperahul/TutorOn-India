@@ -362,18 +362,16 @@ class Enrollment(TimeStampedUUIDModel):
 
 
 # ==========================================
-# 5. CLASSES & ATTENDANCE (NO LIVE VIDEO HOSTING)
+# 5. CLASSES & ATTENDANCE (EXTERNAL LINKS: YOUTUBE, ZOOM, GOOGLE_MEET ONLY)
 # ==========================================
 
 ALLOWED_YOUTUBE_DOMAINS = {'youtube.com', 'www.youtube.com', 'm.youtube.com', 'youtu.be'}
 ALLOWED_ZOOM_DOMAINS = {'zoom.us', 'us04web.zoom.us', 'us05web.zoom.us', 'us02web.zoom.us'}
 ALLOWED_MEET_DOMAINS = {'meet.google.com'}
-ALLOWED_VIDEO_EXTENSIONS = {'.mp4', '.mkv', '.webm', '.mov', '.avi'}
-MAX_VIDEO_SIZE = 524288000  # 500 MB
 
 def validate_external_url(url, class_type):
     if not url:
-        raise ValidationError("External URL is required for this class type.")
+        raise ValidationError("External class link is required.")
     parsed = urllib.parse.urlparse(url)
     if parsed.scheme.lower() != 'https':
         raise ValidationError("Only secure https:// URLs are allowed.")
@@ -392,23 +390,11 @@ def validate_external_url(url, class_type):
         if netloc != 'meet.google.com':
             raise ValidationError("Invalid Google Meet URL. Domain must be meet.google.com.")
     else:
-        raise ValidationError(f"External URL not supported for class type '{class_type}'.")
+        raise ValidationError(f"Invalid class type '{class_type}'. Platform only supports YOUTUBE, ZOOM, and GOOGLE_MEET links.")
     return url
-
-def validate_video_file(file):
-    if not file:
-        raise ValidationError("Video file is required for RECORDED_VIDEO class type.")
-    if file.size > MAX_VIDEO_SIZE:
-        max_mb = MAX_VIDEO_SIZE // (1024 * 1024)
-        raise ValidationError(f"Video file exceeds maximum allowed size of {max_mb} MB.")
-    ext = os.path.splitext(file.name)[1].lower()
-    if ext not in ALLOWED_VIDEO_EXTENSIONS:
-        raise ValidationError(f"Unsupported video extension '{ext}'. Allowed extensions: {', '.join(ALLOWED_VIDEO_EXTENSIONS)}")
-    return file
 
 class ClassContent(TimeStampedUUIDModel):
     class ClassType(models.TextChoices):
-        RECORDED_VIDEO = 'RECORDED_VIDEO', 'Recorded Video'
         YOUTUBE = 'YOUTUBE', 'YouTube Video/Stream'
         ZOOM = 'ZOOM', 'Zoom Meeting/Class'
         GOOGLE_MEET = 'GOOGLE_MEET', 'Google Meet'
@@ -420,11 +406,11 @@ class ClassContent(TimeStampedUUIDModel):
     class_type = models.CharField(
         max_length=20,
         choices=ClassType.choices,
-        default=ClassType.RECORDED_VIDEO,
+        default=ClassType.ZOOM,
         db_index=True
     )
-    video_file = models.FileField(upload_to='classes/videos/%Y/%m/', null=True, blank=True)
-    external_url = models.URLField(max_length=500, null=True, blank=True)
+    external_url = models.URLField(max_length=500, blank=True, default='', help_text="Direct link for YouTube, Zoom, or Google Meet class")
+    video_file = models.FileField(upload_to='classes/videos/%Y/%m/', null=True, blank=True, editable=False)
     thumbnail = models.ImageField(upload_to='classes/thumbnails/%Y/%m/', null=True, blank=True)
     scheduled_date = models.DateTimeField(null=True, blank=True)
     duration = models.PositiveIntegerField(default=60, help_text="Duration in minutes")
@@ -441,12 +427,9 @@ class ClassContent(TimeStampedUUIDModel):
 
     def clean(self):
         super().clean()
-        if self.class_type == self.ClassType.RECORDED_VIDEO:
-            if self.video_file:
-                validate_video_file(self.video_file)
-        elif self.class_type in [self.ClassType.YOUTUBE, self.ClassType.ZOOM, self.ClassType.GOOGLE_MEET]:
-            if self.external_url:
-                validate_external_url(self.external_url, self.class_type)
+        if not self.external_url:
+            raise ValidationError("Class link (external_url) is required. Live streaming or video hosting is not provided on-platform; provide a valid YouTube, Zoom, or Google Meet link.")
+        validate_external_url(self.external_url, self.class_type)
 
 class Attendance(TimeStampedUUIDModel):
     class Status(models.TextChoices):

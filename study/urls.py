@@ -1,5 +1,7 @@
 from django.urls import path, include
+# pyrefly: ignore [missing-import]
 from rest_framework.routers import DefaultRouter
+# pyrefly: ignore [missing-import]
 from .views import (
     # Auth
     StudentRegistrationView, TeacherRegistrationView, UnifiedRegistrationView,
@@ -8,8 +10,9 @@ from .views import (
     MeView, UserBlockViewSet,
 
     # Students & Teachers
+    StudentViewSet, TeacherViewSet,
     StudentProfileView, StudentDashboardView,
-    TeacherListView, TeacherDetailView, TeacherBatchesListView,
+    TeacherBatchesListView,
     TeacherReviewsListView, TeacherProfileView, TeacherVerificationSubmitView,
     TeacherDashboardView,
 
@@ -50,8 +53,8 @@ from .views import (
     PaymentInitiateView, PaymentVerifyView, StudentPaymentHistoryView,
 
     # Admin Panel
-    AdminDashboardStatsView, AdminUsersListView, AdminTeachersListView,
-    AdminStudentsListView, AdminTeacherVerificationsListView,
+    AdminDashboardStatsView, AdminDashboardActivityView, AdminDashboardSearchView,
+    AdminUsersListView, AdminTeacherVerificationsListView,
     AdminTeacherVerificationDetailView, AdminTeacherVerificationApproveView,
     AdminTeacherVerificationRejectView, AdminConnectionsListView,
     AdminBatchesListView, AdminEnrollmentsListView, AdminReviewsListView,
@@ -63,6 +66,7 @@ from .views import (
 router = DefaultRouter()
 router.register(r'blocks', UserBlockViewSet, basename='user-blocks')
 router.register(r'teacher/batches', TeacherBatchViewSet, basename='teacher-batches')
+router.register(r'students', StudentViewSet, basename='students')
 
 urlpatterns = [
     # Auth
@@ -74,6 +78,8 @@ urlpatterns = [
     path('auth/logout/', LogoutView.as_view(), name='auth-logout'),
     path('auth/verify-email/', VerifyEmailView.as_view(), name='verify-email'),
     path('auth/resend-verification/', ResendVerificationView.as_view(), name='resend-verification'),
+    # path('auth/resend-otp/', ResendVerificationView.as_view(), name='resend-otp'),
+    # path('auth/generate-otp/', ResendVerificationView.as_view(), name='generate-otp'),
     path('auth/forgot-password/', ForgotPasswordView.as_view(), name='forgot-password'),
     path('auth/reset-password/', ResetPasswordView.as_view(), name='reset-password'),
     path('auth/me/', MeView.as_view(), name='auth-me'),
@@ -87,8 +93,8 @@ urlpatterns = [
     path('student/payments/', StudentPaymentHistoryView.as_view(), name='student-payments'),
 
     # Teacher Area & Public Search
-    path('teachers/', TeacherListView.as_view(), name='teacher-list'),
-    path('teachers/<uuid:id>/', TeacherDetailView.as_view(), name='teacher-detail'),
+    path('teachers/', TeacherViewSet.as_view({'get': 'list', 'post': 'create'}), name='teacher-list'),
+    path('teachers/<uuid:id>/', TeacherViewSet.as_view({'get': 'retrieve', 'put': 'update', 'patch': 'partial_update', 'delete': 'destroy'}), name='teacher-detail'),
     path('teachers/<uuid:id>/batches/', TeacherBatchesListView.as_view(), name='teacher-batches'),
     path('teachers/<uuid:id>/reviews/', TeacherReviewsListView.as_view(), name='teacher-reviews'),
     path('teacher/profile/', TeacherProfileView.as_view(), name='teacher-profile'),
@@ -149,9 +155,13 @@ urlpatterns = [
 
     # Admin REST APIs
     path('admin/dashboard/', AdminDashboardStatsView.as_view(), name='admin-dashboard-stats'),
+    path('admin/dashboard/activity/', AdminDashboardActivityView.as_view(), name='admin-dashboard-activity'),
+    path('admin/dashboard/search/', AdminDashboardSearchView.as_view(), name='admin-dashboard-search'),
     path('admin/users/', AdminUsersListView.as_view(), name='admin-users-list'),
-    path('admin/teachers/', AdminTeachersListView.as_view(), name='admin-teachers-list'),
-    path('admin/students/', AdminStudentsListView.as_view(), name='admin-students-list'),
+    path('admin/teachers/', TeacherViewSet.as_view({'get': 'list', 'post': 'create'}), name='admin-teachers-list'),
+    path('admin/teachers/<uuid:id>/', TeacherViewSet.as_view({'get': 'retrieve', 'put': 'update', 'patch': 'partial_update', 'delete': 'destroy'}), name='admin-teacher-detail'),
+    path('admin/students/', StudentViewSet.as_view({'get': 'list', 'post': 'create'}), name='admin-students-list'),
+    path('admin/students/<uuid:id>/', StudentViewSet.as_view({'get': 'retrieve', 'put': 'update', 'patch': 'partial_update', 'delete': 'destroy'}), name='admin-student-detail'),
     path('admin/teacher-verifications/', AdminTeacherVerificationsListView.as_view(), name='admin-teacher-verifications-list'),
     path('admin/teacher-verifications/<uuid:id>/', AdminTeacherVerificationDetailView.as_view(), name='admin-teacher-verification-detail'),
     path('admin/teacher-verifications/<uuid:id>/approve/', AdminTeacherVerificationApproveView.as_view(), name='admin-teacher-verification-approve'),

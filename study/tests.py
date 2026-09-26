@@ -481,11 +481,149 @@ class TutorOnIndiaBackendTests(TestCase):
         }, format='json')
         self.assertEqual(res_meet.status_code, status.HTTP_201_CREATED)
 
-        # 3. Invalid URL (dangerous scheme or non-allowed domain)
+        # 3. Valid Zoom URL
+        res_zoom = self.client.post(f'/api/v1/teacher/batches/{self.batch.id}/classes/', {
+            "title": "Zoom Live Class",
+            "class_type": "ZOOM",
+            "external_url": "https://zoom.us/j/12345678901"
+        }, format='json')
+        self.assertEqual(res_zoom.status_code, status.HTTP_201_CREATED)
+
+        # 4. Invalid URL (dangerous scheme or non-allowed domain)
         res_bad = self.client.post(f'/api/v1/teacher/batches/{self.batch.id}/classes/', {
             "title": "Dangerous Class",
             "class_type": "YOUTUBE",
             "external_url": "javascript:alert(1)"
         }, format='json')
         self.assertEqual(res_bad.status_code, status.HTTP_400_BAD_REQUEST)
+
+        # 5. Missing external URL (must fail since live class link is required)
+        res_missing_url = self.client.post(f'/api/v1/teacher/batches/{self.batch.id}/classes/', {
+            "title": "No Link Class",
+            "class_type": "ZOOM",
+            "external_url": ""
+        }, format='json')
+        self.assertEqual(res_missing_url.status_code, status.HTTP_400_BAD_REQUEST)
+
+        # 6. Disallowed class type (e.g. RECORDED_VIDEO or OTHER)
+        res_invalid_type = self.client.post(f'/api/v1/teacher/batches/{self.batch.id}/classes/', {
+            "title": "Recorded Video Class",
+            "class_type": "RECORDED_VIDEO",
+            "external_url": "https://youtube.com/watch?v=123"
+        }, format='json')
+        self.assertEqual(res_invalid_type.status_code, status.HTTP_400_BAD_REQUEST)
+
+    # -----------------------------------------------------------
+    # ADMIN DASHBOARD API TESTS
+    # -----------------------------------------------------------
+    def test_admin_dashboard_stats_endpoint(self):
+        # 1. Non-admin should be denied access (403)
+        self.client.force_authenticate(user=self.student1_user)
+        res_forbidden = self.client.get('/api/v1/admin/dashboard/')
+        self.assertEqual(res_forbidden.status_code, status.HTTP_403_FORBIDDEN)
+
+        # 2. Authenticated Admin
+        self.client.force_authenticate(user=self.admin)
+        res = self.client.get('/api/v1/admin/dashboard/')
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        self.assertTrue(res.data['success'])
+
+        data = res.data['data']
+        # Check Admin Context
+        self.assertIn('admin_user', data)
+        self.assertEqual(data['admin_user']['email'], self.admin.email)
+
+        # Check Primary KPIs (6 cards matching dashboard UI)
+        self.assertIn('primary_kpis', data)
+        kpis = {item['id']: item for item in data['primary_kpis']}
+        self.assertIn('total_students', kpis)
+        self.assertIn('total_teachers', kpis)
+        self.assertIn('pending_teacher_verification', kpis)
+        self.assertIn('pending_connections', kpis)
+        self.assertIn('pending_enrollments', kpis)
+        self.assertIn('revenue', kpis)
+
+        # Check Secondary Metrics (4 items matching secondary row)
+        self.assertIn('secondary_metrics', data)
+        sec_metrics = {item['id']: item for item in data['secondary_metrics']}
+        self.assertIn('active_students', sec_metrics)
+        self.assertIn('verified_teachers', sec_metrics)
+        self.assertIn('active_batches', sec_metrics)
+        self.assertIn('active_connections', sec_metrics)
+
+        # Check Platform Activity
+        self.assertIn('platform_activity', data)
+        self.assertEqual(data['platform_activity']['active_range'], '30d')
+        self.assertEqual(len(data['platform_activity']['timeline']), 30)
+
+        # Check backward-compatible fields
+        self.assertIn('total_students', data)
+        self.assertIn('total_teachers', data)
+        self.assertIn('verified_teachers', data)
+        self.assertIn('total_revenue', data)
+
+    def test_admin_dashboard_activity_endpoint(self):
+        self.client.force_authenticate(user=self.admin)
+
+        # Test 7 Days
+        res_7d = self.client.get('/api/v1/admin/dashboard/activity/?range=7d')
+        self.assertEqual(res_7d.status_code, status.HTTP_200_OK)
+        self.assertEqual(res_7d.data['data']['active_range'], '7d')
+        self.assertEqual(len(res_7d.data['data']['timeline']), 7)
+
+        # Test 30 Days
+        res_30d = self.client.get('/api/v1/admin/dashboard/activity/?range=30d')
+        self.assertEqual(res_30d.status_code, status.HTTP_200_OK)
+        self.assertEqual(res_30d.data['data']['active_range'], '30d')
+        self.assertEqual(len(res_30d.data['data']['timeline']), 30)
+
+        # Test 6 Months
+        res_6m = self.client.get('/api/v1/admin/dashboard/activity/?range=6m')
+        self.assertEqual(res_6m.status_code, status.HTTP_200_OK)
+        self.assertEqual(res_6m.data['data']['active_range'], '6m')
+        self.assertEqual(len(res_6m.data['data']['timeline']), 26)
+
+    def test_admin_dashboard_search_endpoint(self):
+        self.client.force_authenticate(user=self.admin)
+
+        # 1. Empty or short query
+        res_short = self.client.get('/api/v1/admin/dashboard/search/?q=a')
+        self.assertEqual(res_short.status_code, status.HTTP_200_OK)
+        self.assertEqual(res_short.data['data']['total_matches'], 0)
+
+        # 2. Search for student by name
+        res_student = self.client.get(f'/api/v1/admin/dashboard/search/?q={self.student1_user.first_name}')
+        self.assertEqual(res_student.status_code, status.HTTP_200_OK)
+        self.assertGreaterEqual(res_student.data['data']['total_matches'], 1)
+        self.assertGreaterEqual(len(res_student.data['data']['students']), 1)
+
+        # 3. Search for batch
+        res_batch = self.client.get('/api/v1/admin/dashboard/search/?q=Physics')
+        self.assertEqual(res_batch.status_code, status.HTTP_200_OK)
+        self.assertGreaterEqual(len(res_batch.data['data']['batches']), 1)
+
+    # -----------------------------------------------------------
+    # STUDENT EMAIL OTP VERIFICATION TESTS
+    # -----------------------------------------------------------
+    def test_student_signup_and_email_otp_verification(self):
+        # 1. Sign up new student
+        reg_payload = {
+            "first_name": "Rohan",
+            "last_name": "Kapoor",
+            "email": "rohan.otp@tutoron.in",
+            "password": "StrongPassword123!",
+            "phone_number": "+919877700001",
+            "education_level": "Class 11"
+        }
+        res_reg = self.client.post('/api/v1/auth/register/student/', reg_payload, format='json')
+        self.assertEqual(res_reg.status_code, status.HTTP_201_CREATED)
+        self.assertTrue(res_reg.data['success'])
+        # Student is now directly verified upon signup (OTP requirement removed)
+        self.assertTrue(res_reg.data['data']['is_verified'])
+
+        # Verify student user in database is verified
+        user = User.objects.get(email="rohan.otp@tutoron.in")
+        self.assertTrue(user.is_verified)
+
+
 
