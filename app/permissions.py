@@ -8,7 +8,7 @@ class IsAdminUserRole(permissions.BasePermission):
         return bool(
             request.user and 
             request.user.is_authenticated and 
-            (request.user.is_staff or request.user.user_type == 'ADMIN')
+            (request.user.is_staff or request.user.role == 'ADMIN')
         )
 
 class IsStudent(permissions.BasePermission):
@@ -19,28 +19,28 @@ class IsStudent(permissions.BasePermission):
         return bool(
             request.user and 
             request.user.is_authenticated and 
-            request.user.user_type == 'STUDENT'
+            request.user.role == 'STUDENT'
         )
 
 class IsTeacher(permissions.BasePermission):
     """
-    Permission check for Teacher users.
+    Permission check for verified Teacher users. Unverified teachers pending admin approval are blocked.
     """
     def has_permission(self, request, view):
-        return bool(
-            request.user and 
-            request.user.is_authenticated and 
-            request.user.user_type == 'TEACHER'
-        )
+        if not (request.user and request.user.is_authenticated and request.user.role == 'TEACHER'):
+            return False
+        tp = getattr(request.user, 'teacher_profile', None)
+        return bool(request.user.is_verified or (tp and tp.is_verified))
 
 class IsVerifiedTeacher(permissions.BasePermission):
     """
     Permission check for verified Teacher users.
     """
     def has_permission(self, request, view):
-        if not (request.user and request.user.is_authenticated and request.user.user_type == 'TEACHER'):
+        if not (request.user and request.user.is_authenticated and request.user.role == 'TEACHER'):
             return False
-        return getattr(getattr(request.user, 'teacher_profile', None), 'is_verified', False)
+        tp = getattr(request.user, 'teacher_profile', None)
+        return bool(request.user.is_verified or (tp and tp.is_verified))
 
 class IsBatchTeacher(permissions.BasePermission):
     """
@@ -60,7 +60,7 @@ class IsEnrolledStudent(permissions.BasePermission):
     Permission check to ensure student is enrolled in the batch.
     """
     def has_object_permission(self, request, view, obj):
-        if not (request.user and request.user.is_authenticated and request.user.user_type == 'STUDENT'):
+        if not (request.user and request.user.is_authenticated and request.user.role == 'STUDENT'):
             return False
         batch = getattr(obj, 'batch', obj)
         return batch.enrollments.filter(student=request.user, status='ACTIVE').exists()
@@ -90,7 +90,7 @@ class IsSelfOrAdmin(permissions.BasePermission):
     def has_object_permission(self, request, view, obj):
         if not (request.user and request.user.is_authenticated):
             return False
-        if request.user.is_staff or request.user.user_type == 'ADMIN':
+        if request.user.is_staff or request.user.role == 'ADMIN':
             return True
         if hasattr(obj, 'user'):
             return obj.user == request.user

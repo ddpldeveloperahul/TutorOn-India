@@ -9,13 +9,13 @@ from app.models import (
 
 @admin.register(User)
 class UserAdmin(BaseUserAdmin):
-    list_display = ('id', 'email', 'phone_number', 'full_name', 'user_type', 'is_verified', 'is_staff', 'is_active', 'created_at')
-    list_filter = ('user_type', 'is_verified', 'is_staff', 'is_active')
+    list_display = ('id', 'email', 'phone_number', 'full_name', 'role', 'is_verified', 'is_staff', 'is_active', 'created_at')
+    list_filter = ('role', 'is_verified', 'is_staff', 'is_active')
     search_fields = ('email', 'phone_number', 'full_name')
     ordering = ('-created_at',)
     fieldsets = (
         (None, {'fields': ('email', 'phone_number', 'password')}),
-        ('Personal info', {'fields': ('full_name', 'user_type', 'is_verified')}),
+        ('Personal info', {'fields': ('full_name', 'role', 'is_verified')}),
         ('Permissions', {'fields': ('is_active', 'is_staff', 'is_superuser', 'groups', 'user_permissions')}),
         ('Important dates', {'fields': ('last_login', 'created_at')}),
     )

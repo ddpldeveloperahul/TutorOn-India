@@ -18,7 +18,7 @@ def get_or_create_user(email, phone_number, full_name, user_type, is_verified=Fa
     
     if user:
         user.full_name = full_name
-        user.user_type = user_type
+        user.role = user_type
         user.is_verified = is_verified
         user.save()
         return user, False
@@ -27,7 +27,7 @@ def get_or_create_user(email, phone_number, full_name, user_type, is_verified=Fa
             email=email,
             phone_number=phone_number,
             full_name=full_name,
-            user_type=user_type,
+            role=user_type,
             is_verified=is_verified
         )
         return user, True

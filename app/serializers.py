@@ -2,7 +2,7 @@ from rest_framework import serializers
 from django.contrib.auth import get_user_model
 from app.models import (
     StudentProfile, TeacherProfile, TeacherVerification, Batch,
-    BatchAnnouncement, ClassContent, StudyMaterial, Bookmark, Enrollment,
+    BatchAnnouncement, ClassContent, StudyMaterial, StudentUpdate, Bookmark, Enrollment,
     Attendance, ConnectionRequest, ContactAccess, Conversation, Message,
     MessageAttachment, Notification, Review, Report, UserBlock, Payment, AuditLog
 )
@@ -19,7 +19,7 @@ class UserSerializer(serializers.ModelSerializer):
     """
     class Meta:
         model = User
-        fields = ['id', 'email', 'phone_number', 'full_name', 'user_type', 'is_active', 'is_verified', 'created_at']
+        fields = ['id', 'email', 'phone_number', 'full_name', 'role', 'user_type', 'is_active', 'is_verified', 'created_at']
         read_only_fields = ['id', 'is_active', 'is_verified', 'created_at']
 
 
@@ -93,7 +93,8 @@ class StudentRegistrationSerializer(serializers.Serializer):
             phone_number=phone_number,
             password=password,
             full_name=full_name,
-            user_type='STUDENT'
+            role='STUDENT',
+            is_verified=True
         )
 
         StudentProfile.objects.create(
@@ -113,44 +114,74 @@ class StudentRegistrationSerializer(serializers.Serializer):
 
 class TeacherRegistrationSerializer(serializers.Serializer):
     """
-    Serializer matching exact 23 teacher registration fields from UI mockup.
-    Supports parameter aliases for test payloads and postman consistency.
+    Serializer strictly matching exact 23 teacher registration fields from the UI spec table:
+    1. Full Name
+    2. Profile Photo
+    3. Email Address
+    4. Mobile Number
+    5. Password
+    6. Date of Birth
+    7. Gender
+    8. State
+    9. City
+    10. Address
+    11. Highest Qualification
+    12. University / Institute
+    13. Qualification Year
+    14. Subjects
+    15. Exam Expertise
+    16. Teaching Languages
+    17. Short Professional Bio
+    18. Specialization / Expertise
+    19. Current / Previous Institution
+    20. ID Proof Type
+    21. ID Proof Document
+    22. Qualification Certificate
+    23. Year Experience
     """
     full_name = serializers.CharField(max_length=150)
-    email = serializers.EmailField(required=False)
     email_address = serializers.EmailField(required=False)
-    phone_number = serializers.CharField(max_length=20, required=False)
+    email = serializers.EmailField(required=False)
     mobile_number = serializers.CharField(max_length=20, required=False)
+    phone_number = serializers.CharField(max_length=20, required=False)
     password = serializers.CharField(write_only=True, min_length=8)
-
-    # 23 specific UI fields
-    gender = serializers.ChoiceField(choices=['MALE', 'FEMALE', 'OTHER'], default='OTHER')
+    
     dob = serializers.DateField(required=False, allow_null=True)
     date_of_birth = serializers.DateField(required=False, allow_null=True)
-    qualifications = serializers.CharField(required=False, allow_blank=True)
-    experience_years = serializers.IntegerField(default=0)
-    teaching_subjects = serializers.JSONField(required=False, default=list)
-    classes_taught = serializers.JSONField(required=False, default=list)
-    boards_catered = serializers.JSONField(required=False, default=list)
-    mode_offered = serializers.ChoiceField(choices=['ONLINE', 'OFFLINE', 'BOTH'], default='BOTH')
-    hourly_rate = serializers.DecimalField(max_digits=10, decimal_places=2, default=0.00)
-    monthly_fee = serializers.DecimalField(max_digits=10, decimal_places=2, default=0.00)
-    city_location = serializers.CharField(max_length=100, required=False, allow_blank=True)
+    gender = serializers.ChoiceField(choices=['MALE', 'FEMALE', 'OTHER'], default='OTHER')
     state = serializers.CharField(max_length=100, required=False, allow_blank=True)
-    pincode = serializers.CharField(max_length=20, required=False, allow_blank=True)
-    bio = serializers.CharField(required=False, allow_blank=True)
-    tagline = serializers.CharField(max_length=255, required=False, allow_blank=True)
+    city = serializers.CharField(max_length=100, required=False, allow_blank=True)
+    city_location = serializers.CharField(max_length=100, required=False, allow_blank=True)
+    address = serializers.CharField(required=False, allow_blank=True)
+    
+    highest_qualification = serializers.CharField(max_length=255, required=False, allow_blank=True)
+    qualifications = serializers.CharField(required=False, allow_blank=True)
+    university_institute = serializers.CharField(max_length=255, required=False, allow_blank=True)
+    qualification_year = serializers.IntegerField(required=False, allow_null=True)
+    
+    subjects = serializers.JSONField(required=False, default=list)
+    teaching_subjects = serializers.JSONField(required=False, default=list)
+    exam_expertise = serializers.JSONField(required=False, default=list)
+    teaching_languages = serializers.JSONField(required=False, default=list)
     languages_spoken = serializers.JSONField(required=False, default=list)
-    demo_class_available = serializers.BooleanField(default=True)
-
-    # Document uploads (optional in test payloads)
-    profile_photo = serializers.FileField(required=False, allow_null=True)
+    
+    short_bio = serializers.CharField(required=False, allow_blank=True)
+    bio = serializers.CharField(required=False, allow_blank=True)
+    specialization = serializers.CharField(max_length=255, required=False, allow_blank=True)
+    current_previous_institution = serializers.CharField(max_length=255, required=False, allow_blank=True)
+    current_institution = serializers.CharField(max_length=255, required=False, allow_blank=True)
+    
+    id_proof_type = serializers.CharField(max_length=100, required=False, allow_blank=True)
     id_proof_document = serializers.FileField(required=False, allow_null=True)
     qualification_certificate = serializers.FileField(required=False, allow_null=True)
+    profile_photo = serializers.FileField(required=False, allow_null=True)
+    
+    year_experience = serializers.IntegerField(required=False, default=0)
+    experience_years = serializers.IntegerField(required=False, default=0)
 
     def to_internal_value(self, data):
         data = data.copy()
-        # Alias mappings
+        # Full Alias mappings for all 23 fields
         if 'email_address' in data and 'email' not in data:
             data['email'] = data['email_address']
         if 'mobile_number' in data and 'phone_number' not in data:
@@ -159,6 +190,18 @@ class TeacherRegistrationSerializer(serializers.Serializer):
             data['dob'] = data['date_of_birth']
         if 'city' in data and 'city_location' not in data:
             data['city_location'] = data['city']
+        if 'subjects' in data and 'teaching_subjects' not in data:
+            data['teaching_subjects'] = data['subjects']
+        if 'teaching_languages' in data and 'languages_spoken' not in data:
+            data['languages_spoken'] = data['teaching_languages']
+        if 'short_bio' in data and 'bio' not in data:
+            data['bio'] = data['short_bio']
+        if 'highest_qualification' in data and 'qualifications' not in data:
+            data['qualifications'] = data['highest_qualification']
+        if 'current_previous_institution' in data and 'current_institution' not in data:
+            data['current_institution'] = data['current_previous_institution']
+        if 'year_experience' in data and 'experience_years' not in data:
+            data['experience_years'] = data['year_experience']
         return super().to_internal_value(data)
 
     def validate(self, data):
@@ -188,60 +231,64 @@ class TeacherRegistrationSerializer(serializers.Serializer):
 
         dob = validated_data.pop('dob', None) or validated_data.pop('date_of_birth', None)
         gender = validated_data.pop('gender', 'OTHER')
-        qualifications = validated_data.pop('qualifications', '')
-        experience_years = validated_data.pop('experience_years', 0)
-        teaching_subjects = validated_data.pop('teaching_subjects', [])
-        classes_taught = validated_data.pop('classes_taught', [])
-        boards_catered = validated_data.pop('boards_catered', [])
-        mode_offered = validated_data.pop('mode_offered', 'BOTH')
-        hourly_rate = validated_data.pop('hourly_rate', 0.00)
-        monthly_fee = validated_data.pop('monthly_fee', 0.00)
-        city_location = validated_data.pop('city_location', '')
         state = validated_data.pop('state', '')
-        pincode = validated_data.pop('pincode', '')
-        bio = validated_data.pop('bio', '')
-        tagline = validated_data.pop('tagline', '')
-        languages_spoken = validated_data.pop('languages_spoken', [])
-        demo_class_available = validated_data.pop('demo_class_available', True)
+        city_location = validated_data.pop('city_location', '') or validated_data.pop('city', '')
+        address = validated_data.pop('address', '')
+
+        highest_qualification = validated_data.pop('highest_qualification', '') or validated_data.pop('qualifications', '')
+        university_institute = validated_data.pop('university_institute', '')
+        qualification_year = validated_data.pop('qualification_year', None)
+
+        experience_years = validated_data.pop('experience_years', 0) or validated_data.pop('year_experience', 0)
+        teaching_subjects = validated_data.pop('teaching_subjects', []) or validated_data.pop('subjects', [])
+        exam_expertise = validated_data.pop('exam_expertise', [])
+        languages_spoken = validated_data.pop('languages_spoken', []) or validated_data.pop('teaching_languages', [])
+
+        bio = validated_data.pop('bio', '') or validated_data.pop('short_bio', '')
+        specialization = validated_data.pop('specialization', '')
+        current_institution = validated_data.pop('current_institution', '') or validated_data.pop('current_previous_institution', '')
+        id_proof_type = validated_data.pop('id_proof_type', '')
 
         user = User.objects.create_user(
             email=email,
             phone_number=phone_number,
             password=password,
             full_name=full_name,
-            user_type='TEACHER'
+            role='TEACHER',
+            is_verified=False
         )
 
         teacher_profile = TeacherProfile.objects.create(
             user=user,
             gender=gender,
             dob=dob,
-            qualifications=qualifications,
+            state=state,
+            city_location=city_location,
+            address=address,
+            highest_qualification=highest_qualification,
+            qualifications=highest_qualification,
+            university_institute=university_institute,
+            qualification_year=qualification_year,
             experience_years=experience_years,
             teaching_subjects=teaching_subjects,
-            classes_taught=classes_taught,
-            boards_catered=boards_catered,
-            mode_offered=mode_offered,
-            hourly_rate=hourly_rate,
-            monthly_fee=monthly_fee,
-            city_location=city_location,
-            state=state,
-            pincode=pincode,
-            bio=bio,
-            tagline=tagline,
+            exam_expertise=exam_expertise,
             languages_spoken=languages_spoken,
-            demo_class_available=demo_class_available,
-            profile_photo=profile_photo
+            bio=bio,
+            specialization=specialization,
+            current_institution=current_institution,
+            id_proof_type=id_proof_type,
+            profile_photo=profile_photo,
+            id_proof_document=id_proof,
+            qualification_certificate=qual_cert,
+            is_verified=False
         )
 
-        # Create teacher verification record if documents provided
-        if id_proof or qual_cert:
-            TeacherVerification.objects.create(
-                teacher_profile=teacher_profile,
-                id_proof_document=id_proof,
-                qualification_certificate=qual_cert,
-                status='PENDING'
-            )
+        TeacherVerification.objects.create(
+            teacher_profile=teacher_profile,
+            id_proof_document=id_proof,
+            qualification_certificate=qual_cert,
+            status='PENDING'
+        )
 
         return user
 
@@ -360,6 +407,9 @@ class BatchAnnouncementSerializer(serializers.ModelSerializer):
 
 
 class ClassContentSerializer(serializers.ModelSerializer):
+    batch_title = serializers.CharField(source='batch.title', read_only=True)
+    batch_subject = serializers.CharField(source='batch.subject', read_only=True)
+
     class Meta:
         model = ClassContent
         fields = '__all__'
@@ -367,10 +417,19 @@ class ClassContentSerializer(serializers.ModelSerializer):
 
 
 class StudyMaterialSerializer(serializers.ModelSerializer):
+    batch_title = serializers.CharField(source='batch.title', read_only=True)
+
     class Meta:
         model = StudyMaterial
         fields = '__all__'
         read_only_fields = ['uploaded_at']
+
+
+class StudentUpdateSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = StudentUpdate
+        fields = '__all__'
+        read_only_fields = ['teacher', 'created_at']
 
 
 class BatchDetailSerializer(serializers.ModelSerializer):
@@ -528,3 +587,44 @@ class AuditLogSerializer(serializers.ModelSerializer):
     class Meta:
         model = AuditLog
         fields = '__all__'
+
+
+# ==============================================================================
+# ADMIN DASHBOARD SERIALIZERS
+# ==============================================================================
+
+class AdminUserListSerializer(serializers.ModelSerializer):
+    profile_details = serializers.SerializerMethodField()
+    verifications_count = serializers.SerializerMethodField()
+
+    class Meta:
+        model = User
+        fields = ['id', 'email', 'phone_number', 'full_name', 'role', 'user_type', 'is_active', 'is_staff', 'is_verified', 'created_at', 'profile_details', 'verifications_count']
+
+    def get_profile_details(self, obj):
+        if obj.role == 'TEACHER' and hasattr(obj, 'teacher_profile'):
+            tp = obj.teacher_profile
+            return {
+                "qualifications": tp.qualifications,
+                "experience_years": tp.experience_years,
+                "teaching_subjects": tp.teaching_subjects,
+                "city": tp.city_location,
+                "rating": tp.rating,
+                "hourly_rate": float(tp.hourly_rate),
+                "monthly_fee": float(tp.monthly_fee)
+            }
+        elif obj.role == 'STUDENT' and hasattr(obj, 'student_profile'):
+            sp = obj.student_profile
+            return {
+                "student_class": sp.student_class,
+                "board_or_university": sp.board_or_university,
+                "subjects_needed": sp.subjects_needed,
+                "city": sp.city_location
+            }
+        return None
+
+    def get_verifications_count(self, obj):
+        if obj.role == 'TEACHER' and hasattr(obj, 'teacher_profile'):
+            return obj.teacher_profile.verifications.count()
+        return 0
+
