@@ -226,6 +226,7 @@ class TeacherProfileSerializer(serializers.ModelSerializer):
     email = serializers.EmailField(source='user.email', read_only=True)
     phone_number = serializers.CharField(source='user.phone_number', required=False)
     profile_photo = serializers.ImageField(source='user.profile_photo', required=False, allow_null=True)
+    current_status = serializers.CharField(source='verification_status', read_only=True)
 
     class Meta:
         model = TeacherProfile
@@ -233,7 +234,7 @@ class TeacherProfileSerializer(serializers.ModelSerializer):
             'id', 'first_name', 'last_name', 'email', 'phone_number', 'profile_photo',
             'display_name', 'bio', 'qualification', 'experience_years',
             'subjects', 'teaching_languages', 'exam_expertise', 'hourly_rate',
-            'demo_video_url', 'verification_status', 'average_rating',
+            'demo_video_url', 'current_status', 'verification_status', 'average_rating',
             'total_reviews', 'total_students', 'is_featured', 'created_at'
         )
         read_only_fields = (
@@ -264,6 +265,7 @@ class TeacherPublicSearchSerializer(serializers.ModelSerializer):
     last_name = serializers.CharField(source='user.last_name', read_only=True)
     full_name = serializers.CharField(source='user.get_full_name', read_only=True)
     profile_photo = serializers.ImageField(source='user.profile_photo', read_only=True)
+    current_status = serializers.CharField(source='verification_status', read_only=True)
 
     class Meta:
         model = TeacherProfile
@@ -271,7 +273,7 @@ class TeacherPublicSearchSerializer(serializers.ModelSerializer):
             'id', 'first_name', 'last_name', 'full_name', 'display_name',
             'profile_photo', 'bio', 'qualification', 'experience_years',
             'subjects', 'teaching_languages', 'exam_expertise', 'hourly_rate',
-            'demo_video_url', 'verification_status', 'average_rating',
+            'demo_video_url', 'current_status', 'verification_status', 'average_rating',
             'total_reviews', 'total_students', 'is_featured'
         )
         read_only_fields = fields

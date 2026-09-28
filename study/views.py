@@ -729,14 +729,30 @@ class TeacherFilter(django_filters.FilterSet):
     min_price = django_filters.NumberFilter(field_name='hourly_rate', lookup_expr='gte')
     max_price = django_filters.NumberFilter(field_name='hourly_rate', lookup_expr='lte')
     is_featured = django_filters.BooleanFilter(field_name='is_featured')
+    status = django_filters.CharFilter(method='filter_status')
+    verification_status = django_filters.CharFilter(method='filter_status')
 
     class Meta:
         model = TeacherProfile
         fields = [
             'subject', 'language', 'exam_expertise', 'qualification',
             'min_experience', 'max_experience', 'min_rating',
-            'min_price', 'max_price', 'is_featured'
+            'min_price', 'max_price', 'is_featured', 'status', 'verification_status'
         ]
+
+    def filter_status(self, queryset, name, value):
+        if not value:
+            return queryset
+        val = str(value).strip().upper()
+        if val in ['PENDING', 'PENDING_VERIFICATION']:
+            return queryset.filter(verification_status=TeacherProfile.VerificationStatus.PENDING_VERIFICATION)
+        elif val in ['VERIFIED', 'APPROVED']:
+            return queryset.filter(verification_status=TeacherProfile.VerificationStatus.VERIFIED)
+        elif val in ['REJECTED']:
+            return queryset.filter(verification_status=TeacherProfile.VerificationStatus.REJECTED)
+        elif val in ['SUSPENDED']:
+            return queryset.filter(verification_status=TeacherProfile.VerificationStatus.SUSPENDED)
+        return queryset.filter(verification_status__iexact=val)
 
     def filter_subject(self, queryset, name, value):
         if not value:
@@ -2697,19 +2713,38 @@ class AdminDashboardStatsView(APIView):
                 }
             },
             {
+                "id": "verified_teachers",
+                "title": "VERIFIED TEACHERS",
+                "icon": "teacher_check",
+                "value": verified_teachers,
+                "total_verified": verified_teachers,
+                "formatted_value": format_number(verified_teachers),
+                "rate": verification_pass_rate,
+                "badge": {
+                    "text": f"{verification_pass_rate}% verified",
+                    "variant": "success"
+                },
+                "subtitle": "Approved Faculty",
+                "action": {
+                    "label": "View Details →",
+                    "url": "/admin/teachers?status=verified"
+                }
+            },
+            {
                 "id": "pending_teacher_verification",
-                "title": "PENDING TEACHER VERIFICATION",
+                "title": "PENDING TEACHERS",
                 "icon": "verification",
                 "value": pending_verifications,
+                "total_pending": pending_verifications,
                 "formatted_value": format_number(pending_verifications),
                 "badge": {
-                    "text": "Needs attention",
-                    "variant": "warning"
+                    "text": "Needs attention" if pending_verifications > 0 else "All verified",
+                    "variant": "warning" if pending_verifications > 0 else "success"
                 },
                 "subtitle": "Action Required",
                 "action": {
                     "label": "View Details →",
-                    "url": "/admin/teacher-verifications"
+                    "url": "/admin/teachers?status=pending"
                 }
             },
             {
@@ -2828,9 +2863,17 @@ class AdminDashboardStatsView(APIView):
         ]
 
         # ------------------------------------------------------------------
-        # 9. Assembled Payload (Rich structured + Backwards-compatible)
+        # 9. Assembled Payload (Clean readable summary only once)
         # ------------------------------------------------------------------
+        summary_counts = {
+            "total_students": total_students,
+            "total_teachers": total_teachers,
+            "verified_teachers": verified_teachers,
+            "pending_teachers": pending_verifications
+        }
+
         data = {
+            "summary": summary_counts,
             "admin_user": admin_user_data,
             "primary_kpis": primary_kpis,
             "secondary_metrics": secondary_metrics,
@@ -2838,9 +2881,6 @@ class AdminDashboardStatsView(APIView):
             "recent_activity": recent_activity_data,
 
             # Flat backward-compatible fields
-            "total_students": total_students,
-            "total_teachers": total_teachers,
-            "verified_teachers": verified_teachers,
             "pending_teacher_approvals": pending_verifications,
             "total_batches": total_batches,
             "active_batches": active_batches,
@@ -2851,7 +2891,11 @@ class AdminDashboardStatsView(APIView):
             "pending_reports": pending_reports,
         }
 
-        return api_response(success=True, message="Admin dashboard statistics retrieved successfully", data=data)
+        return Response({
+            "success": True,
+            "message": "Admin dashboard statistics retrieved successfully",
+            "data": data
+        }, status=status.HTTP_200_OK)
 
 
 class AdminDashboardActivityView(APIView):
@@ -3066,7 +3110,7 @@ class TeacherViewSet(viewsets.ModelViewSet):
     - DELETE /api/v1/teachers/<id>/   -> Delete teacher
     ====================================================================
     """
-    queryset = TeacherProfile.objects.select_related('user').all().order_by('-created_at')
+    queryset = TeacherProfile.objects.select_related('user').filter(user__role=User.Role.TEACHER).exclude(user__role=User.Role.ADMIN).order_by('-created_at')
     serializer_class = TeacherProfileSerializer
     permission_classes = [AllowAny]
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
@@ -3087,15 +3131,24 @@ class TeacherViewSet(viewsets.ModelViewSet):
                 return obj
         return super().get_object()
 
+    def is_admin_request(self):
+        user = getattr(self.request, 'user', None)
+        path = getattr(self.request, 'path', '')
+        if user and user.is_authenticated and (user.role == User.Role.ADMIN or user.is_staff):
+            return True
+        if 'admin' in path:
+            return True
+        return False
+
     def get_serializer_class(self):
-        if self.action in ['list', 'retrieve'] and not (self.request.user.is_authenticated and (self.request.user.role == User.Role.ADMIN or self.request.user.is_staff)):
+        if self.action in ['list', 'retrieve'] and not self.is_admin_request():
             return TeacherPublicSearchSerializer
         return TeacherProfileSerializer
 
     def get_queryset(self):
-        qs = super().get_queryset()
-        if not (self.request.user.is_authenticated and (self.request.user.role == User.Role.ADMIN or self.request.user.is_staff)):
-            if self.action == 'list':
+        qs = super().get_queryset().filter(user__role=User.Role.TEACHER).exclude(user__role=User.Role.ADMIN).exclude(user__is_staff=True)
+        if not self.is_admin_request():
+            if self.action == 'list' and not (self.request.query_params.get('status') or self.request.query_params.get('verification_status')):
                 return qs.filter(verification_status=TeacherProfile.VerificationStatus.VERIFIED, user__is_active=True)
         return qs
 
@@ -3114,12 +3167,85 @@ class TeacherViewSet(viewsets.ModelViewSet):
 
     def list(self, request, *args, **kwargs):
         queryset = self.filter_queryset(self.get_queryset())
+
+        # Base queryset for real teachers (excluding admins) to compute counts
+        base_teachers_qs = TeacherProfile.objects.filter(
+            user__role=User.Role.TEACHER
+        ).exclude(user__role=User.Role.ADMIN).exclude(user__is_staff=True)
+
+        total_teachers_count = base_teachers_qs.count()
+        verified_count = base_teachers_qs.filter(
+            verification_status=TeacherProfile.VerificationStatus.VERIFIED
+        ).count()
+        pending_count = base_teachers_qs.filter(
+            verification_status=TeacherProfile.VerificationStatus.PENDING_VERIFICATION
+        ).count()
+        rejected_count = base_teachers_qs.filter(
+            verification_status=TeacherProfile.VerificationStatus.REJECTED
+        ).count()
+
+        counts = {
+            "total_teachers": total_teachers_count,
+            "verified_teachers": verified_count,
+            "pending_verification": pending_count,
+            "rejected_teachers": rejected_count
+        }
+
+        status_param = request.query_params.get('status') or request.query_params.get('verification_status')
+        status_val = status_param.strip().upper() if status_param else None
+
         page = self.paginate_queryset(queryset)
+        total_in_filter = self.paginator.page.paginator.count if (page is not None and hasattr(self, 'paginator') and getattr(self.paginator, 'page', None)) else queryset.count()
+        current_page = self.paginator.page.number if (page is not None and hasattr(self, 'paginator') and getattr(self.paginator, 'page', None)) else 1
+        num_pages = self.paginator.page.paginator.num_pages if (page is not None and hasattr(self, 'paginator') and getattr(self.paginator, 'page', None)) else 1
+        page_size = (self.paginator.get_page_size(request) or 20) if hasattr(self, 'paginator') else 20
+
         if page is not None:
             serializer = self.get_serializer(page, many=True)
-            return self.get_paginated_response(serializer.data)
-        serializer = self.get_serializer(queryset, many=True)
-        return api_response(success=True, message="Teachers list retrieved", data=serializer.data)
+            serialized_data = serializer.data
+        else:
+            serializer = self.get_serializer(queryset, many=True)
+            serialized_data = serializer.data
+
+        # Ensure current_status is set inside each teacher / doctor object
+        for item in serialized_data:
+            if 'current_status' not in item or not item['current_status']:
+                item['current_status'] = item.get('verification_status', '')
+
+        # Build response based on filter
+        response_payload = {
+            "success": True,
+            "message": "Data fetched successfully",
+        }
+
+        pagination_payload = {
+            "page": current_page,
+            "page_size": page_size,
+            "total": total_in_filter,
+            "total_pages": num_pages,
+        }
+
+        if status_val in ['VERIFIED', 'APPROVED']:
+            response_payload["verified_count"] = total_in_filter
+            pagination_payload["verified_count"] = total_in_filter
+        elif status_val in ['PENDING', 'PENDING_VERIFICATION']:
+            response_payload["pending_count"] = total_in_filter
+            pagination_payload["pending_count"] = total_in_filter
+        elif status_val in ['REJECTED']:
+            response_payload["rejected_count"] = total_in_filter
+            pagination_payload["rejected_count"] = total_in_filter
+        else:
+            response_payload["total_count"] = total_in_filter
+            response_payload["verified_count"] = verified_count
+            response_payload["pending_count"] = pending_count
+            pagination_payload["total_count"] = total_in_filter
+            pagination_payload["verified_count"] = verified_count
+            pagination_payload["pending_count"] = pending_count
+
+        response_payload["data"] = serialized_data
+        response_payload["pagination"] = pagination_payload
+
+        return Response(response_payload, status=status.HTTP_200_OK)
 
     def retrieve(self, request, *args, **kwargs):
         instance = self.get_object()
