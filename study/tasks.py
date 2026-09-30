@@ -1,7 +1,9 @@
 import logging
+# pyrefly: ignore [missing-import]
 from celery import shared_task
 from django.core.mail import send_mail
 from django.conf import settings
+# pyrefly: ignore [missing-import]
 from .views import NotificationService
 
 logger = logging.getLogger(__name__)

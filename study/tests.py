@@ -1,11 +1,14 @@
 from django.test import TestCase
 from django.urls import reverse
+# pyrefly: ignore [missing-import]
 from rest_framework.test import APIClient
+# pyrefly: ignore [missing-import]
 from rest_framework import status
+# pyrefly: ignore [import-error, missing-import]
 from .models import (
-    User, StudentProfile, TeacherProfile, TeacherVerification,
+    User, StudentProfile, TeacherProfile,
     Batch, Enrollment, ClassContent, ConnectionRequest, ContactAccess,
-    UserBlock, Review
+    UserBlock
 )
 
 class TutorOnIndiaBackendTests(TestCase):
@@ -389,6 +392,7 @@ class TutorOnIndiaBackendTests(TestCase):
     def test_class_reminder_dispatch(self):
         from django.utils import timezone
         from datetime import timedelta
+        # pyrefly: ignore [missing-import]
         from .models import Notification
 
         # Create active enrollment

@@ -978,6 +978,7 @@ class ReportSerializer(serializers.ModelSerializer):
 
     def get_reported_user(self, obj):
         from django.db.models import Q
+        # pyrefly: ignore [missing-import]
         from .models import TeacherProfile, StudentProfile, Batch, ClassContent
         target_name = f"{obj.target_type} ({obj.target_id[:8]})"
         target_role = obj.target_type.capitalize()
