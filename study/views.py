@@ -11,6 +11,8 @@ from django.http import FileResponse
 
 # pyrefly: ignore [missing-import]
 from rest_framework import generics, viewsets, status, filters, permissions
+from rest_framework.decorators import action
+from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 # pyrefly: ignore [missing-import]
 from rest_framework.views import APIView
 # pyrefly: ignore [missing-import]
@@ -34,7 +36,7 @@ from django_filters.rest_framework import DjangoFilterBackend
 from .models import (
     User, UserBlock, EmailVerificationToken, PasswordResetToken,
     StudentProfile, TeacherProfile, TeacherVerification,
-    Batch, BatchAnnouncement, Enrollment, ClassContent, Attendance,
+    Batch, BatchAnnouncement, PlatformAnnouncement, Enrollment, ClassContent, Attendance,
     StudyMaterial, Bookmark, ConnectionRequest, ContactAccess,
     Conversation, Message, MessageAttachment, Notification,
     Review, Report, Payment, AuditLog
@@ -49,7 +51,7 @@ from .serializers import (
     StudentProfileSerializer, StudentSafePublicSerializer,
     TeacherProfileSerializer, TeacherPublicSearchSerializer,
     TeacherVerificationSubmitSerializer, TeacherVerificationAdminSerializer,
-    BatchPublicSerializer, BatchTeacherSerializer, BatchAnnouncementSerializer,
+    BatchPublicSerializer, BatchTeacherSerializer, BatchAnnouncementSerializer, PlatformAnnouncementSerializer,
     EnrollmentSerializer, EnrollmentActionSerializer,
     ClassContentSerializer, AttendanceSerializer,
     StudyMaterialSerializer, BookmarkSerializer,
@@ -1198,7 +1200,6 @@ class StudentDashboardView(APIView):
                 {
                     "id": str(e.batch.id),
                     "title": e.batch.title,
-                    "slug": e.batch.slug,
                     "subject": e.batch.subject,
                     "teacher_name": e.batch.teacher.user.get_full_name(),
                     "status": e.batch.status
@@ -1370,10 +1371,39 @@ class BatchPublicListView(generics.ListAPIView):
             status__in=[Batch.Status.PUBLISHED, Batch.Status.ONGOING]
         ).select_related('teacher', 'teacher__user')
 
+    def list(self, request, *args, **kwargs):
+        queryset = self.filter_queryset(self.get_queryset())
+        page = self.paginate_queryset(queryset)
+        total_count = self.paginator.page.paginator.count if (page is not None and hasattr(self, 'paginator') and getattr(self.paginator, 'page', None)) else queryset.count()
+        current_page = self.paginator.page.number if (page is not None and hasattr(self, 'paginator') and getattr(self.paginator, 'page', None)) else 1
+        num_pages = self.paginator.page.paginator.num_pages if (page is not None and hasattr(self, 'paginator') and getattr(self.paginator, 'page', None)) else 1
+        page_size = (self.paginator.get_page_size(request) or 20) if hasattr(self, 'paginator') else 20
+
+        if page is not None:
+            serializer = self.get_serializer(page, many=True)
+            serialized_data = serializer.data
+        else:
+            serializer = self.get_serializer(queryset, many=True)
+            serialized_data = serializer.data
+
+        return Response({
+            "success": True,
+            "message": "Data fetched successfully",
+            "batch_count": total_count,
+            "data": serialized_data,
+            "pagination": {
+                "page": current_page,
+                "page_size": page_size,
+                "total": total_count,
+                "batch_count": total_count,
+                "total_pages": num_pages
+            }
+        }, status=status.HTTP_200_OK)
+
 class BatchPublicDetailView(generics.RetrieveAPIView):
     permission_classes = [AllowAny]
     serializer_class = BatchPublicSerializer
-    lookup_field = 'slug'
+    lookup_field = 'id'
 
     def get_queryset(self):
         return Batch.objects.filter(
@@ -1493,6 +1523,14 @@ class BatchEnrollRequestView(APIView):
             data=serializer.data,
             status_code=status.HTTP_201_CREATED
         )
+    # def get(self, request, batch_id=None):
+    #     if batch_id is None:
+    #         student_profile = getattr(request.user, 'student_profile', None)
+    #         if not student_profile:
+    #             return api_response(success=True, data=[])
+    #     enrollments = Enrollment.objects.filter(student=student_profile).select_related('batch', 'batch__teacher__user')
+    #     serializer = EnrollmentSerializer(enrollments, many=True)
+    #     return api_response(success=True, message="Enrollments retrieved", data=serializer.data)        
 
 class StudentEnrollmentListView(APIView):
     permission_classes = [IsAuthenticated, IsStudent]
@@ -3141,16 +3179,10 @@ class TeacherViewSet(viewsets.ModelViewSet):
         return False
 
     def get_serializer_class(self):
-        if self.action in ['list', 'retrieve'] and not self.is_admin_request():
-            return TeacherPublicSearchSerializer
         return TeacherProfileSerializer
 
     def get_queryset(self):
-        qs = super().get_queryset().filter(user__role=User.Role.TEACHER).exclude(user__role=User.Role.ADMIN).exclude(user__is_staff=True)
-        if not self.is_admin_request():
-            if self.action == 'list' and not (self.request.query_params.get('status') or self.request.query_params.get('verification_status')):
-                return qs.filter(verification_status=TeacherProfile.VerificationStatus.VERIFIED, user__is_active=True)
-        return qs
+        return super().get_queryset().filter(user__role=User.Role.TEACHER).exclude(user__role=User.Role.ADMIN).exclude(user__is_staff=True)
 
     def create(self, request, *args, **kwargs):
         serializer = TeacherRegistrationSerializer(data=request.data)
@@ -3270,6 +3302,9 @@ class TeacherViewSet(viewsets.ModelViewSet):
         return api_response(success=True, message=f"Teacher '{email}' deleted successfully.")
 
 
+
+
+#admin panel views
 class AdminTeacherVerificationsListView(generics.ListAPIView):
     permission_classes = [IsAdmin]
     serializer_class = TeacherVerificationAdminSerializer
@@ -3313,79 +3348,632 @@ class AdminTeacherVerificationRejectView(APIView):
         serializer = TeacherVerificationAdminSerializer(rejected)
         return api_response(success=True, message="Teacher verification rejected.", data=serializer.data)
 
-class AdminConnectionsListView(generics.ListAPIView):
+class AdminConnectionsListView(viewsets.ModelViewSet):
     permission_classes = [IsAdmin]
     serializer_class = ConnectionRequestSerializer
     filter_backends = [DjangoFilterBackend]
     filterset_fields = ['status', 'contact_unlocked']
     queryset = ConnectionRequest.objects.select_related('student__user', 'teacher__user').all()
 
-class AdminBatchesListView(generics.ListAPIView):
-    permission_classes = [IsAdmin]
+class AdminBatchesListView(viewsets.ModelViewSet):
+    queryset = Batch.objects.select_related('teacher__user').all().order_by('-created_at')
     serializer_class = BatchPublicSerializer
-    filter_backends = [DjangoFilterBackend]
-    filterset_fields = ['status', 'subject']
-    queryset = Batch.objects.select_related('teacher__user').all()
+    permission_classes = [AllowAny]
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    filterset_fields = ['status', 'subject', 'is_free']
+    search_fields = ['title', 'description', 'subject', 'teacher__display_name', 'teacher__user__first_name', 'teacher__user__last_name']
+    ordering_fields = ['start_date', 'price', 'created_at']
 
-class AdminEnrollmentsListView(generics.ListAPIView):
-    permission_classes = [IsAdmin]
+    def list(self, request, *args, **kwargs):
+        queryset = self.filter_queryset(self.get_queryset())
+        page = self.paginate_queryset(queryset)
+        total_count = self.paginator.page.paginator.count if (page is not None and hasattr(self, 'paginator') and getattr(self.paginator, 'page', None)) else queryset.count()
+        current_page = self.paginator.page.number if (page is not None and hasattr(self, 'paginator') and getattr(self.paginator, 'page', None)) else 1
+        num_pages = self.paginator.page.paginator.num_pages if (page is not None and hasattr(self, 'paginator') and getattr(self.paginator, 'page', None)) else 1
+        page_size = (self.paginator.get_page_size(request) or 20) if hasattr(self, 'paginator') else 20
+
+        if page is not None:
+            serializer = self.get_serializer(page, many=True)
+            serialized_data = serializer.data
+        else:
+            serializer = self.get_serializer(queryset, many=True)
+            serialized_data = serializer.data
+
+        status_counts = {
+            "total": Batch.objects.count(),
+            "published": Batch.objects.filter(status=Batch.Status.PUBLISHED).count(),
+            "ongoing": Batch.objects.filter(status=Batch.Status.ONGOING).count(),
+            "completed": Batch.objects.filter(status=Batch.Status.COMPLETED).count(),
+            "cancelled": Batch.objects.filter(status=Batch.Status.CANCELLED).count(),
+            "draft": Batch.objects.filter(status=Batch.Status.DRAFT).count(),
+        }
+
+        return Response({
+            "success": True,
+            "message": "Batches fetched successfully",
+            "batch_count": total_count,
+            "status_counts": status_counts,
+            "data": serialized_data,
+            "pagination": {
+                "page": current_page,
+                "page_size": page_size,
+                "total": total_count,
+                "batch_count": total_count,
+                "total_pages": num_pages
+            }
+        }, status=status.HTTP_200_OK)
+    
+
+class AdminEnrollmentsListView(viewsets.ModelViewSet):
+    queryset = Enrollment.objects.select_related('student__user', 'batch__teacher__user').all().order_by('-requested_at')
     serializer_class = EnrollmentSerializer
-    filter_backends = [DjangoFilterBackend]
-    filterset_fields = ['status', 'payment_status']
-    queryset = Enrollment.objects.select_related('student__user', 'batch').all()
+    permission_classes = [AllowAny]
+    filter_backends = [filters.SearchFilter, filters.OrderingFilter]
+    search_fields = [
+        'student__user__first_name', 'student__user__last_name', 'student__user__email',
+        'batch__teacher__user__first_name', 'batch__teacher__user__last_name', 'batch__teacher__display_name',
+        'batch__title', 'batch__subject', 'id'
+    ]
+    ordering_fields = ['requested_at', 'status', 'payment_status']
 
-class AdminReviewsListView(generics.ListAPIView):
-    permission_classes = [IsAdmin]
+    def get_queryset(self):
+        qs = super().get_queryset()
+        
+        # 1. Tab / Status filter
+        status_param = self.request.query_params.get('status') or self.request.query_params.get('tab')
+        if status_param:
+            status_clean = status_param.strip().upper()
+            if status_clean in ['PAYMENT_PENDING', 'PAYMENT PENDING', 'UNPAID']:
+                qs = qs.filter(Q(payment_status=Enrollment.PaymentStatus.UNPAID) | Q(status__in=[Enrollment.Status.PENDING_PAYMENT, Enrollment.Status.REQUESTED]))
+            elif status_clean in ['CONFIRMED', 'ACTIVE', 'APPROVED']:
+                qs = qs.filter(status__in=[Enrollment.Status.ACTIVE, Enrollment.Status.APPROVED, Enrollment.Status.PAYMENT_COMPLETED])
+            elif status_clean in ['REJECTED', 'CANCELLED']:
+                qs = qs.filter(status__in=[Enrollment.Status.REJECTED, Enrollment.Status.CANCELLED])
+            elif status_clean not in ['ALL', 'ALL ENROLLMENTS']:
+                qs = qs.filter(status__iexact=status_clean)
+
+        # 2. Payment status dropdown filter
+        payment_param = self.request.query_params.get('payment_status')
+        if payment_param:
+            pay_clean = payment_param.strip().upper()
+            if pay_clean in ['PAID']:
+                qs = qs.filter(payment_status=Enrollment.PaymentStatus.PAID)
+            elif pay_clean in ['PAYMENT_PENDING', 'PAYMENT PENDING', 'UNPAID']:
+                qs = qs.filter(payment_status=Enrollment.PaymentStatus.UNPAID)
+            elif pay_clean in ['FAILED']:
+                qs = qs.filter(payment_status=Enrollment.PaymentStatus.UNPAID)
+            elif pay_clean in ['REFUNDED']:
+                qs = qs.filter(payment_status=Enrollment.PaymentStatus.REFUNDED)
+
+        return qs
+
+    def perform_update(self, serializer):
+        instance = serializer.save()
+        if instance.status in [Enrollment.Status.APPROVED, Enrollment.Status.ACTIVE] and not instance.approved_at:
+            instance.approved_at = timezone.now()
+            instance.save(update_fields=['approved_at'])
+        elif instance.status in [Enrollment.Status.REJECTED, Enrollment.Status.CANCELLED] and not instance.cancelled_at:
+            instance.cancelled_at = timezone.now()
+            instance.save(update_fields=['cancelled_at'])
+
+    def list(self, request, *args, **kwargs):
+        queryset = self.filter_queryset(self.get_queryset())
+        page = self.paginate_queryset(queryset)
+        total_count = self.paginator.page.paginator.count if (page is not None and hasattr(self, 'paginator') and getattr(self.paginator, 'page', None)) else queryset.count()
+        current_page = self.paginator.page.number if (page is not None and hasattr(self, 'paginator') and getattr(self.paginator, 'page', None)) else 1
+        num_pages = self.paginator.page.paginator.num_pages if (page is not None and hasattr(self, 'paginator') and getattr(self.paginator, 'page', None)) else 1
+        page_size = (self.paginator.get_page_size(request) or 10) if hasattr(self, 'paginator') else 10
+
+        if page is not None:
+            serializer = self.get_serializer(page, many=True)
+            serialized_data = serializer.data
+        else:
+            serializer = self.get_serializer(queryset, many=True)
+            serialized_data = serializer.data
+
+        counts = {
+            "all": Enrollment.objects.count(),
+            "payment_pending": Enrollment.objects.filter(Q(payment_status=Enrollment.PaymentStatus.UNPAID) | Q(status__in=[Enrollment.Status.PENDING_PAYMENT, Enrollment.Status.REQUESTED])).count(),
+            "confirmed": Enrollment.objects.filter(status__in=[Enrollment.Status.ACTIVE, Enrollment.Status.APPROVED, Enrollment.Status.PAYMENT_COMPLETED]).count(),
+            "rejected": Enrollment.objects.filter(status__in=[Enrollment.Status.REJECTED, Enrollment.Status.CANCELLED]).count(),
+        }
+
+        return Response({
+            "success": True,
+            "message": "Enrollments retrieved successfully",
+            "counts": counts,
+            "data": serialized_data,
+            "pagination": {
+                "page": current_page,
+                "page_size": page_size,
+                "total": total_count,
+                "total_pages": num_pages
+            }
+        }, status=status.HTTP_200_OK)
+
+
+class AdminAnnouncementsListView(viewsets.ModelViewSet):
+    queryset = PlatformAnnouncement.objects.select_related('author').all().order_by('-created_at')
+    serializer_class = PlatformAnnouncementSerializer
+    permission_classes = [AllowAny]
+    parser_classes = [MultiPartParser, FormParser, JSONParser]
+    filter_backends = [filters.SearchFilter, filters.OrderingFilter]
+    search_fields = ['title', 'description', 'code', 'author__first_name', 'author__last_name', 'author__email']
+    ordering_fields = ['created_at', 'status', 'start_date', 'end_date']
+
+    def get_queryset(self):
+        qs = super().get_queryset()
+
+        # 1. Tab / Status filter
+        status_param = self.request.query_params.get('status') or self.request.query_params.get('tab')
+        if status_param:
+            status_clean = status_param.strip().upper()
+            if status_clean in ['PUBLISHED']:
+                qs = qs.filter(status=PlatformAnnouncement.Status.PUBLISHED)
+            elif status_clean in ['SCHEDULED']:
+                qs = qs.filter(status=PlatformAnnouncement.Status.SCHEDULED)
+            elif status_clean in ['DRAFT', 'DRAFTS']:
+                qs = qs.filter(status=PlatformAnnouncement.Status.DRAFT)
+            elif status_clean in ['EXPIRED']:
+                qs = qs.filter(status=PlatformAnnouncement.Status.EXPIRED)
+
+        # 2. Audience filter
+        audience_param = self.request.query_params.get('audience')
+        if audience_param:
+            aud_clean = audience_param.strip().upper().replace(' ', '_')
+            if aud_clean in ['ALL_USERS', 'ALL']:
+                qs = qs.filter(audience=PlatformAnnouncement.Audience.ALL_USERS)
+            elif aud_clean in ['STUDENTS', 'STUDENT']:
+                qs = qs.filter(audience=PlatformAnnouncement.Audience.STUDENTS)
+            elif aud_clean in ['TEACHERS', 'TEACHER']:
+                qs = qs.filter(audience=PlatformAnnouncement.Audience.TEACHERS)
+
+        # 3. Type filter
+        type_param = self.request.query_params.get('type') or self.request.query_params.get('announcement_type')
+        if type_param:
+            typ_clean = type_param.strip().upper()
+            if typ_clean in ['IMPORTANT']:
+                qs = qs.filter(announcement_type=PlatformAnnouncement.Type.IMPORTANT)
+            elif typ_clean in ['PROMOTIONAL', 'PROMOTION']:
+                qs = qs.filter(announcement_type=PlatformAnnouncement.Type.PROMOTIONAL)
+            elif typ_clean in ['GENERAL']:
+                qs = qs.filter(announcement_type=PlatformAnnouncement.Type.GENERAL)
+
+        return qs
+
+    def perform_create(self, serializer):
+        user = self.request.user if self.request.user and self.request.user.is_authenticated else None
+        serializer.save(author=user)
+
+    @action(detail=True, methods=['post', 'patch'])
+    def publish(self, request, pk=None):
+        announcement = self.get_object()
+        announcement.status = PlatformAnnouncement.Status.PUBLISHED
+        announcement.save(update_fields=['status', 'updated_at'])
+        serializer = self.get_serializer(announcement)
+        return Response({
+            "success": True,
+            "message": "Announcement published successfully",
+            "data": serializer.data
+        }, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=['post', 'patch'])
+    def unpublish(self, request, pk=None):
+        announcement = self.get_object()
+        announcement.status = PlatformAnnouncement.Status.DRAFT
+        announcement.save(update_fields=['status', 'updated_at'])
+        serializer = self.get_serializer(announcement)
+        return Response({
+            "success": True,
+            "message": "Announcement unpublished successfully",
+            "data": serializer.data
+        }, status=status.HTTP_200_OK)
+
+    def list(self, request, *args, **kwargs):
+        queryset = self.filter_queryset(self.get_queryset())
+        page = self.paginate_queryset(queryset)
+        total_count = self.paginator.page.paginator.count if (page is not None and hasattr(self, 'paginator') and getattr(self.paginator, 'page', None)) else queryset.count()
+        current_page = self.paginator.page.number if (page is not None and hasattr(self, 'paginator') and getattr(self.paginator, 'page', None)) else 1
+        num_pages = self.paginator.page.paginator.num_pages if (page is not None and hasattr(self, 'paginator') and getattr(self.paginator, 'page', None)) else 1
+        page_size = (self.paginator.get_page_size(request) or 10) if hasattr(self, 'paginator') else 10
+
+        if page is not None:
+            serializer = self.get_serializer(page, many=True)
+            serialized_data = serializer.data
+        else:
+            serializer = self.get_serializer(queryset, many=True)
+            serialized_data = serializer.data
+
+        counts = {
+            "all": PlatformAnnouncement.objects.count(),
+            "published": PlatformAnnouncement.objects.filter(status=PlatformAnnouncement.Status.PUBLISHED).count(),
+            "scheduled": PlatformAnnouncement.objects.filter(status=PlatformAnnouncement.Status.SCHEDULED).count(),
+            "drafts": PlatformAnnouncement.objects.filter(status=PlatformAnnouncement.Status.DRAFT).count(),
+            "expired": PlatformAnnouncement.objects.filter(status=PlatformAnnouncement.Status.EXPIRED).count(),
+        }
+
+        return Response({
+            "success": True,
+            "message": "Announcements retrieved successfully",
+            "counts": counts,
+            "data": serialized_data,
+            "pagination": {
+                "page": current_page,
+                "page_size": page_size,
+                "total": total_count,
+                "total_pages": num_pages
+            }
+        }, status=status.HTTP_200_OK)
+
+
+class AdminPromotionalBannersViewSet(viewsets.ModelViewSet):
+    queryset = PlatformAnnouncement.objects.filter(is_banner=True).order_by('slot', '-created_at')
+    serializer_class = PlatformAnnouncementSerializer
+    permission_classes = [AllowAny]
+    parser_classes = [MultiPartParser, FormParser, JSONParser]
+    filter_backends = [filters.SearchFilter, filters.OrderingFilter]
+    search_fields = ['title', 'description', 'code', 'cta_label', 'cta_url']
+    ordering_fields = ['slot', 'created_at', 'status']
+
+    def list(self, request, *args, **kwargs):
+        queryset = self.filter_queryset(self.get_queryset())
+        page = self.paginate_queryset(queryset)
+        total_count = self.paginator.page.paginator.count if (page is not None and hasattr(self, 'paginator') and getattr(self.paginator, 'page', None)) else queryset.count()
+        current_page = self.paginator.page.number if (page is not None and hasattr(self, 'paginator') and getattr(self.paginator, 'page', None)) else 1
+        num_pages = self.paginator.page.paginator.num_pages if (page is not None and hasattr(self, 'paginator') and getattr(self.paginator, 'page', None)) else 1
+        page_size = (self.paginator.get_page_size(request) or 10) if hasattr(self, 'paginator') else 10
+
+        if page is not None:
+            serializer = self.get_serializer(page, many=True)
+            serialized_data = serializer.data
+        else:
+            serializer = self.get_serializer(queryset, many=True)
+            serialized_data = serializer.data
+
+        active_count = PlatformAnnouncement.objects.filter(is_banner=True, status=PlatformAnnouncement.Status.PUBLISHED).count()
+
+        return Response({
+            "success": True,
+            "message": "Promotional banners retrieved successfully",
+            "active_count": active_count,
+            "total_count": PlatformAnnouncement.objects.filter(is_banner=True).count(),
+            "data": serialized_data,
+            "pagination": {
+                "page": current_page,
+                "page_size": page_size,
+                "total": total_count,
+                "total_pages": num_pages
+            }
+        }, status=status.HTTP_200_OK)
+
+
+class AdminStudyMaterialsListView(viewsets.ModelViewSet):
+    queryset = StudyMaterial.objects.select_related('batch', 'teacher__user').all().order_by('-published_at')
+    serializer_class = StudyMaterialSerializer
+    permission_classes = [AllowAny]
+    parser_classes = [MultiPartParser, FormParser, JSONParser]
+    filter_backends = [filters.SearchFilter, filters.OrderingFilter]
+    search_fields = [
+        'title', 'code', 'description', 'file_type',
+        'teacher__display_name', 'teacher__user__first_name', 'teacher__user__last_name',
+        'batch__title', 'batch__subject'
+    ]
+    ordering_fields = ['published_at', 'views_count', 'downloads_count', 'size', 'status']
+
+    def get_queryset(self):
+        qs = super().get_queryset()
+
+        # 1. Tab / Status filter
+        status_param = self.request.query_params.get('status') or self.request.query_params.get('tab')
+        if status_param:
+            status_clean = status_param.strip().upper()
+            if status_clean in ['PUBLISHED']:
+                qs = qs.filter(status=StudyMaterial.Status.PUBLISHED)
+            elif status_clean in ['REPORTED', 'FLAGGED', 'REPORTED / FLAGGED']:
+                qs = qs.filter(status=StudyMaterial.Status.REPORTED)
+            elif status_clean in ['DRAFT', 'DRAFTS']:
+                qs = qs.filter(status=StudyMaterial.Status.DRAFT)
+            elif status_clean in ['HIDDEN', 'HIDDEN_BY_ADMIN', 'HIDDEN BY ADMIN']:
+                qs = qs.filter(status=StudyMaterial.Status.HIDDEN)
+
+        # 2. File type filter
+        file_type_param = self.request.query_params.get('file_type')
+        if file_type_param:
+            qs = qs.filter(file_type__iexact=file_type_param.strip())
+
+        return qs
+
+    def perform_create(self, serializer):
+        batch = serializer.validated_data.get('batch')
+        teacher = serializer.validated_data.get('teacher')
+        if not teacher and batch:
+            teacher = batch.teacher
+        serializer.save(teacher=teacher)
+
+    @action(detail=True, methods=['post', 'patch'])
+    def hide(self, request, pk=None):
+        material = self.get_object()
+        material.status = StudyMaterial.Status.HIDDEN
+        material.save(update_fields=['status'])
+        serializer = self.get_serializer(material)
+        return Response({
+            "success": True,
+            "message": "Study material hidden successfully",
+            "data": serializer.data
+        }, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=['post', 'patch'])
+    def unhide(self, request, pk=None):
+        material = self.get_object()
+        material.status = StudyMaterial.Status.PUBLISHED
+        material.save(update_fields=['status'])
+        serializer = self.get_serializer(material)
+        return Response({
+            "success": True,
+            "message": "Study material published/unhidden successfully",
+            "data": serializer.data
+        }, status=status.HTTP_200_OK)
+
+    def list(self, request, *args, **kwargs):
+        queryset = self.filter_queryset(self.get_queryset())
+        page = self.paginate_queryset(queryset)
+        total_count = self.paginator.page.paginator.count if (page is not None and hasattr(self, 'paginator') and getattr(self.paginator, 'page', None)) else queryset.count()
+        current_page = self.paginator.page.number if (page is not None and hasattr(self, 'paginator') and getattr(self.paginator, 'page', None)) else 1
+        num_pages = self.paginator.page.paginator.num_pages if (page is not None and hasattr(self, 'paginator') and getattr(self.paginator, 'page', None)) else 1
+        page_size = (self.paginator.get_page_size(request) or 10) if hasattr(self, 'paginator') else 10
+
+        if page is not None:
+            serializer = self.get_serializer(page, many=True)
+            serialized_data = serializer.data
+        else:
+            serializer = self.get_serializer(queryset, many=True)
+            serialized_data = serializer.data
+
+        counts = {
+            "all": StudyMaterial.objects.count(),
+            "published": StudyMaterial.objects.filter(status=StudyMaterial.Status.PUBLISHED).count(),
+            "reported": StudyMaterial.objects.filter(status=StudyMaterial.Status.REPORTED).count(),
+            "drafts": StudyMaterial.objects.filter(status=StudyMaterial.Status.DRAFT).count(),
+            "hidden": StudyMaterial.objects.filter(status=StudyMaterial.Status.HIDDEN).count(),
+        }
+
+        return Response({
+            "success": True,
+            "message": "Study materials retrieved successfully",
+            "counts": counts,
+            "data": serialized_data,
+            "pagination": {
+                "page": current_page,
+                "page_size": page_size,
+                "total": total_count,
+                "total_pages": num_pages
+            }
+        }, status=status.HTTP_200_OK)
+
+
+class AdminReviewsListView(viewsets.ModelViewSet):
+    queryset = Review.objects.select_related('student__user', 'teacher__user', 'batch').all().order_by('-created_at')
     serializer_class = ReviewSerializer
-    filter_backends = [DjangoFilterBackend]
-    filterset_fields = ['status']
-    queryset = Review.objects.select_related('student__user', 'teacher__user', 'batch').all()
+    permission_classes = [AllowAny]
+    filter_backends = [filters.SearchFilter, filters.OrderingFilter]
+    search_fields = ['student__user__first_name', 'student__user__last_name', 'teacher__user__first_name', 'teacher__user__last_name', 'teacher__display_name', 'batch__title', 'comment']
+    ordering_fields = ['created_at', 'rating', 'status']
 
-class AdminReportsListView(generics.ListAPIView):
-    permission_classes = [IsAdmin]
+    def get_queryset(self):
+        qs = super().get_queryset()
+        status_param = self.request.query_params.get('status')
+        if status_param:
+            status_clean = status_param.strip().upper()
+            if status_clean in ['FLAGGED', 'REPORTED', 'FLAGGED / REPORTED', 'PENDING']:
+                qs = qs.filter(status__in=[Review.Status.FLAGGED, Review.Status.PENDING])
+            elif status_clean in ['REMOVED', 'REMOVED_BY_ADMIN', 'REMOVED BY ADMIN']:
+                qs = qs.filter(status=Review.Status.REMOVED)
+            elif status_clean in ['PUBLISHED', 'APPROVED']:
+                qs = qs.filter(status=Review.Status.PUBLISHED)
+
+        rating_param = self.request.query_params.get('rating')
+        if rating_param and rating_param.isdigit():
+            qs = qs.filter(rating=int(rating_param))
+
+        return qs
+
+    def list(self, request, *args, **kwargs):
+        queryset = self.filter_queryset(self.get_queryset())
+        page = self.paginate_queryset(queryset)
+        total_count = self.paginator.page.paginator.count if (page is not None and hasattr(self, 'paginator') and getattr(self.paginator, 'page', None)) else queryset.count()
+        current_page = self.paginator.page.number if (page is not None and hasattr(self, 'paginator') and getattr(self.paginator, 'page', None)) else 1
+        num_pages = self.paginator.page.paginator.num_pages if (page is not None and hasattr(self, 'paginator') and getattr(self.paginator, 'page', None)) else 1
+        page_size = (self.paginator.get_page_size(request) or 10) if hasattr(self, 'paginator') else 10
+
+        if page is not None:
+            serializer = self.get_serializer(page, many=True)
+            serialized_data = serializer.data
+        else:
+            serializer = self.get_serializer(queryset, many=True)
+            serialized_data = serializer.data
+
+        counts = {
+            "all": Review.objects.count(),
+            "published": Review.objects.filter(status=Review.Status.PUBLISHED).count(),
+            "flagged": Review.objects.filter(status__in=[Review.Status.FLAGGED, Review.Status.PENDING]).count(),
+            "removed": Review.objects.filter(status=Review.Status.REMOVED).count(),
+        }
+
+        return Response({
+            "success": True,
+            "message": "Reviews retrieved successfully",
+            "counts": counts,
+            "data": serialized_data,
+            "pagination": {
+                "page": current_page,
+                "page_size": page_size,
+                "total": total_count,
+                "total_pages": num_pages
+            }
+        }, status=status.HTTP_200_OK)
+
+class AdminReportsListView(viewsets.ModelViewSet):
+    queryset = Report.objects.select_related('reporter', 'resolved_by').all().order_by('-created_at')
     serializer_class = ReportSerializer
-    filter_backends = [DjangoFilterBackend]
-    filterset_fields = ['status', 'target_type']
-    queryset = Report.objects.select_related('reporter', 'resolved_by').all()
+    permission_classes = [AllowAny]
+    filter_backends = [filters.SearchFilter, filters.OrderingFilter]
+    search_fields = ['reason', 'description', 'reporter__email', 'reporter__first_name', 'reporter__last_name', 'target_id']
+    ordering_fields = ['created_at', 'status']
+
+    def get_queryset(self):
+        qs = super().get_queryset()
+        status_param = self.request.query_params.get('status')
+        if status_param:
+            status_clean = status_param.strip().upper()
+            if status_clean in ['DISMISSED', 'REJECTED']:
+                qs = qs.filter(status=Report.Status.REJECTED)
+            elif status_clean in ['UNDER_REVIEW', 'UNDER REVIEW', 'REVIEW']:
+                qs = qs.filter(status=Report.Status.UNDER_REVIEW)
+            elif status_clean in ['OPEN', 'RESOLVED']:
+                qs = qs.filter(status=status_clean)
+        return qs
+
+    def list(self, request, *args, **kwargs):
+        queryset = self.filter_queryset(self.get_queryset())
+        page = self.paginate_queryset(queryset)
+        total_count = self.paginator.page.paginator.count if (page is not None and hasattr(self, 'paginator') and getattr(self.paginator, 'page', None)) else queryset.count()
+        current_page = self.paginator.page.number if (page is not None and hasattr(self, 'paginator') and getattr(self.paginator, 'page', None)) else 1
+        num_pages = self.paginator.page.paginator.num_pages if (page is not None and hasattr(self, 'paginator') and getattr(self.paginator, 'page', None)) else 1
+        page_size = (self.paginator.get_page_size(request) or 10) if hasattr(self, 'paginator') else 10
+
+        if page is not None:
+            serializer = self.get_serializer(page, many=True)
+            serialized_data = serializer.data
+        else:
+            serializer = self.get_serializer(queryset, many=True)
+            serialized_data = serializer.data
+
+        counts = {
+            "all": Report.objects.count(),
+            "open": Report.objects.filter(status=Report.Status.OPEN).count(),
+            "under_review": Report.objects.filter(status=Report.Status.UNDER_REVIEW).count(),
+            "resolved": Report.objects.filter(status=Report.Status.RESOLVED).count(),
+            "dismissed": Report.objects.filter(status=Report.Status.REJECTED).count(),
+        }
+
+        return Response({
+            "success": True,
+            "message": "Reports retrieved successfully",
+            "counts": counts,
+            "data": serialized_data,
+            "pagination": {
+                "page": current_page,
+                "page_size": page_size,
+                "total": total_count,
+                "total_pages": num_pages
+            }
+        }, status=status.HTTP_200_OK)
+
+    def perform_update(self, serializer):
+        user = self.request.user if (self.request.user and self.request.user.is_authenticated) else User.objects.filter(role='ADMIN').first()
+        status_val = serializer.validated_data.get('status')
+        if status_val in [Report.Status.RESOLVED, Report.Status.REJECTED]:
+            serializer.save(resolved_by=user, resolved_at=timezone.now())
+        else:
+            serializer.save()
+
 
 class AdminReportResolveView(APIView):
-    permission_classes = [IsAdmin]
+    permission_classes = [AllowAny]
 
     def post(self, request, id):
         try:
             report = Report.objects.get(id=id)
         except Report.DoesNotExist:
             raise NotFound("Report not found.")
-        report.status = request.data.get('status', Report.Status.RESOLVED)
+        status_input = request.data.get('status', 'RESOLVED').strip().upper()
+        if status_input == 'DISMISSED':
+            report.status = Report.Status.REJECTED
+        elif status_input in ['OPEN', 'UNDER_REVIEW', 'RESOLVED', 'REJECTED']:
+            report.status = status_input
+        else:
+            report.status = Report.Status.RESOLVED
+
         report.admin_note = request.data.get('admin_note', '')
-        report.resolved_by = request.user
+        admin_user = request.user if (request.user and request.user.is_authenticated) else User.objects.filter(role='ADMIN').first()
+        report.resolved_by = admin_user
         report.resolved_at = timezone.now()
         report.save()
 
-        AuditLogService.log_action(
-            actor=request.user,
-            action='REPORT_RESOLVED',
-            object_type='Report',
-            object_id=str(report.id),
-            description=f"Admin resolved report on {report.target_type}:{report.target_id} with status {report.status}"
-        )
+        if admin_user:
+            AuditLogService.log_action(
+                actor=admin_user,
+                action='REPORT_RESOLVED',
+                object_type='Report',
+                object_id=str(report.id),
+                description=f"Admin resolved report on {report.target_type}:{report.target_id} with status {report.status}"
+            )
         serializer = ReportSerializer(report)
         return api_response(success=True, message="Report status updated successfully", data=serializer.data)
 
-class AdminPaymentsListView(generics.ListAPIView):
+class AdminPaymentsListView(viewsets.ModelViewSet):
     permission_classes = [IsAdmin]
     serializer_class = PaymentSerializer
     filter_backends = [DjangoFilterBackend]
     filterset_fields = ['status', 'gateway']
     queryset = Payment.objects.select_related('user', 'enrollment__batch').all()
 
-class AdminAuditLogsListView(generics.ListAPIView):
-    permission_classes = [IsAdmin]
+class AdminAuditLogsListView(viewsets.ModelViewSet):
+    permission_classes = [AllowAny]
     serializer_class = AuditLogSerializer
-    filter_backends = [DjangoFilterBackend, filters.SearchFilter]
-    filterset_fields = ['action', 'object_type']
-    search_fields = ['description', 'actor__email', 'object_id']
-    queryset = AuditLog.objects.select_related('actor').all()
+    filter_backends = [filters.SearchFilter, filters.OrderingFilter]
+    search_fields = ['description', 'action', 'actor__email', 'actor__first_name', 'actor__last_name', 'object_id', 'ip_address']
+    ordering_fields = ['created_at', 'action', 'object_type']
+    queryset = AuditLog.objects.select_related('actor').all().order_by('-created_at')
+
+    def get_queryset(self):
+        qs = super().get_queryset()
+        category_param = self.request.query_params.get('category')
+        if category_param:
+            cat_clean = category_param.strip().upper()
+            mapping = {
+                'VERIFICATION': ['TeacherVerification', 'TEACHER_VERIFICATION'],
+                'PRIVACY': ['ConnectionRequest', 'CONNECTION'],
+                'ENROLLMENT': ['Enrollment', 'ENROLLMENT'],
+                'MODERATION': ['Review', 'REVIEW'],
+                'SAFETY': ['Report', 'REPORT', 'UserBlock'],
+                'COMMUNICATIONS': ['PlatformAnnouncement', 'BatchAnnouncement'],
+                'MARKETING': ['PromotionalBanner'],
+                'FINANCIAL': ['Payment']
+            }
+            if cat_clean in mapping:
+                qs = qs.filter(object_type__in=mapping[cat_clean])
+            else:
+                qs = qs.filter(Q(object_type__iexact=category_param) | Q(metadata__category__iexact=category_param))
+        return qs
+
+    def list(self, request, *args, **kwargs):
+        queryset = self.filter_queryset(self.get_queryset())
+        page = self.paginate_queryset(queryset)
+        total_count = self.paginator.page.paginator.count if (page is not None and hasattr(self, 'paginator') and getattr(self.paginator, 'page', None)) else queryset.count()
+        current_page = self.paginator.page.number if (page is not None and hasattr(self, 'paginator') and getattr(self.paginator, 'page', None)) else 1
+        num_pages = self.paginator.page.paginator.num_pages if (page is not None and hasattr(self, 'paginator') and getattr(self.paginator, 'page', None)) else 1
+        page_size = (self.paginator.get_page_size(request) or 10) if hasattr(self, 'paginator') else 10
+
+        if page is not None:
+            serializer = self.get_serializer(page, many=True)
+            serialized_data = serializer.data
+        else:
+            serializer = self.get_serializer(queryset, many=True)
+            serialized_data = serializer.data
+
+        return Response({
+            "success": True,
+            "message": "Audit logs retrieved successfully",
+            "total": total_count,
+            "data": serialized_data,
+            "pagination": {
+                "page": current_page,
+                "page_size": page_size,
+                "total": total_count,
+                "total_pages": num_pages
+            }
+        }, status=status.HTTP_200_OK)
 
 
 class AdminConnectionApproveView(APIView):

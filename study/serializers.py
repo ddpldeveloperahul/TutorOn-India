@@ -6,7 +6,7 @@ from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 # pyrefly: ignore [missing-import]
 from .models import (
     User, UserBlock, StudentProfile, TeacherProfile, TeacherVerification,
-    Batch, BatchAnnouncement, Enrollment, ClassContent, Attendance,
+    Batch, BatchAnnouncement, PlatformAnnouncement, Enrollment, ClassContent, Attendance,
     StudyMaterial, Bookmark, ConnectionRequest,
     Conversation, Message, MessageAttachment, Notification,
     Review, Report, Payment, AuditLog,
@@ -223,6 +223,7 @@ class StudentSafePublicSerializer(serializers.ModelSerializer):
 class TeacherProfileSerializer(serializers.ModelSerializer):
     first_name = serializers.CharField(source='user.first_name', required=False)
     last_name = serializers.CharField(source='user.last_name', required=False)
+    full_name = serializers.CharField(source='user.get_full_name', read_only=True)
     email = serializers.EmailField(source='user.email', read_only=True)
     phone_number = serializers.CharField(source='user.phone_number', required=False)
     profile_photo = serializers.ImageField(source='user.profile_photo', required=False, allow_null=True)
@@ -231,7 +232,7 @@ class TeacherProfileSerializer(serializers.ModelSerializer):
     class Meta:
         model = TeacherProfile
         fields = (
-            'id', 'first_name', 'last_name', 'email', 'phone_number', 'profile_photo',
+            'id', 'first_name', 'last_name', 'full_name', 'email', 'phone_number', 'profile_photo',
             'display_name', 'bio', 'qualification', 'experience_years',
             'subjects', 'teaching_languages', 'exam_expertise', 'hourly_rate',
             'demo_video_url', 'current_status', 'verification_status', 'average_rating',
@@ -309,12 +310,14 @@ class BatchPublicSerializer(serializers.ModelSerializer):
     teacher = TeacherPublicSearchSerializer(read_only=True)
     enrolled_count = serializers.SerializerMethodField()
     available_seats = serializers.SerializerMethodField()
+    timing = serializers.ReadOnlyField()
 
     class Meta:
         model = Batch
         fields = (
-            'id', 'title', 'slug', 'description', 'subject', 'grade_level',
-            'language', 'start_date', 'end_date', 'capacity', 'price', 'is_free',
+            'id', 'title', 'description', 'subject', 'grade_level',
+            'language', 'start_date', 'end_date', 'start_time', 'end_time', 'timing',
+            'capacity', 'price', 'is_free',
             'status', 'thumbnail', 'teacher', 'enrolled_count', 'available_seats',
             'created_at'
         )
@@ -328,15 +331,17 @@ class BatchPublicSerializer(serializers.ModelSerializer):
 
 class BatchTeacherSerializer(serializers.ModelSerializer):
     enrolled_count = serializers.SerializerMethodField()
+    timing = serializers.ReadOnlyField()
 
     class Meta:
         model = Batch
         fields = (
-            'id', 'title', 'slug', 'description', 'subject', 'grade_level',
-            'language', 'start_date', 'end_date', 'capacity', 'price', 'is_free',
+            'id', 'title', 'description', 'subject', 'grade_level',
+            'language', 'start_date', 'end_date', 'start_time', 'end_time', 'timing',
+            'capacity', 'price', 'is_free',
             'status', 'thumbnail', 'enrolled_count', 'created_at', 'updated_at'
         )
-        read_only_fields = ('id', 'slug', 'created_at', 'updated_at')
+        read_only_fields = ('id', 'timing', 'created_at', 'updated_at')
 
     def get_enrolled_count(self, obj):
         return Enrollment.objects.filter(batch=obj, status='ACTIVE').count()
@@ -364,6 +369,75 @@ class BatchAnnouncementSerializer(serializers.ModelSerializer):
         read_only_fields = ('id', 'batch', 'teacher', 'teacher_name', 'published_at')
 
 
+class PlatformAnnouncementSerializer(serializers.ModelSerializer):
+    author_name = serializers.SerializerMethodField()
+    type = serializers.CharField(source='announcement_type', required=False)
+    type_display = serializers.SerializerMethodField()
+    audience_display = serializers.SerializerMethodField()
+    status_display = serializers.SerializerMethodField()
+    schedule = serializers.SerializerMethodField()
+    ctr = serializers.SerializerMethodField()
+    slot_display = serializers.SerializerMethodField()
+
+    class Meta:
+        model = PlatformAnnouncement
+        fields = (
+            'id', 'title', 'code', 'description',
+            'announcement_type', 'type', 'type_display',
+            'audience', 'audience_display',
+            'status', 'status_display',
+            'start_date', 'end_date', 'schedule',
+            'cta_label', 'cta_url',
+            'is_banner', 'slot', 'slot_display',
+            'impressions_count', 'clicks_count', 'ctr',
+            'author', 'author_name', 'banner_image',
+            'created_at', 'updated_at'
+        )
+        read_only_fields = ('id', 'created_at', 'updated_at')
+
+    def get_author_name(self, obj):
+        if obj.author:
+            return obj.author.get_full_name() or obj.author.username
+        return "Admin"
+
+    def get_type_display(self, obj):
+        mapping = {
+            'IMPORTANT': 'Important',
+            'PROMOTIONAL': 'Promotional',
+            'GENERAL': 'General'
+        }
+        return mapping.get(obj.announcement_type, obj.announcement_type.title())
+
+    def get_audience_display(self, obj):
+        mapping = {
+            'ALL_USERS': 'All Users',
+            'STUDENTS': 'Students',
+            'TEACHERS': 'Teachers'
+        }
+        return mapping.get(obj.audience, obj.audience.replace('_', ' ').title())
+
+    def get_status_display(self, obj):
+        return obj.status.replace('_', ' ').title()
+
+    def get_schedule(self, obj):
+        if obj.start_date and obj.end_date:
+            return f"{obj.start_date.strftime('%d %b %Y')} to {obj.end_date.strftime('%d %b %Y')}"
+        elif obj.start_date:
+            return f"From {obj.start_date.strftime('%d %b %Y')}"
+        elif obj.end_date:
+            return f"Until {obj.end_date.strftime('%d %b %Y')}"
+        return "No schedule"
+
+    def get_ctr(self, obj):
+        if obj.impressions_count > 0:
+            rate = (obj.clicks_count / obj.impressions_count) * 100
+            return f"{rate:.2f}%"
+        return "0.00%"
+
+    def get_slot_display(self, obj):
+        return f"Slot #{obj.slot}" if obj.slot else "Slot #1"
+
+
 # ==========================================
 # 4. ENROLLMENT SERIALIZERS
 # ==========================================
@@ -373,15 +447,124 @@ class EnrollmentSerializer(serializers.ModelSerializer):
     batch = BatchPublicSerializer(read_only=True)
     batch_id = serializers.UUIDField(source='batch.id', read_only=True)
     batch_title = serializers.CharField(source='batch.title', read_only=True)
+    
+    enrollment_code = serializers.SerializerMethodField()
+    student_name = serializers.SerializerMethodField()
+    student_grade = serializers.SerializerMethodField()
+    student_avatar = serializers.SerializerMethodField()
+    teacher_name = serializers.SerializerMethodField()
+    teacher_subject = serializers.SerializerMethodField()
+    teacher_avatar = serializers.SerializerMethodField()
+    batch_code = serializers.SerializerMethodField()
+    batch_price = serializers.SerializerMethodField()
+    formatted_price = serializers.SerializerMethodField()
+    formatted_date = serializers.SerializerMethodField()
+    status_display = serializers.SerializerMethodField()
+    payment_status_display = serializers.SerializerMethodField()
 
     class Meta:
         model = Enrollment
         fields = (
-            'id', 'student', 'batch', 'batch_id', 'batch_title',
-            'status', 'payment_status', 'requested_at', 'approved_at',
+            'id', 'enrollment_code', 'student', 'batch', 'batch_id', 'batch_title',
+            'student_name', 'student_grade', 'student_avatar',
+            'teacher_name', 'teacher_subject', 'teacher_avatar',
+            'batch_code', 'batch_price', 'formatted_price',
+            'status', 'status_display',
+            'payment_status', 'payment_status_display',
+            'formatted_date', 'requested_at', 'approved_at',
             'completed_at', 'cancelled_at'
         )
-        read_only_fields = fields
+        read_only_fields = (
+            'id', 'enrollment_code', 'student', 'batch', 'batch_id', 'batch_title',
+            'student_name', 'student_grade', 'student_avatar',
+            'teacher_name', 'teacher_subject', 'teacher_avatar',
+            'batch_code', 'batch_price', 'formatted_price',
+            'status_display', 'payment_status_display',
+            'formatted_date', 'requested_at', 'approved_at',
+            'completed_at', 'cancelled_at'
+        )
+
+    def get_enrollment_code(self, obj):
+        return f"ENR-{str(obj.id)[:5].upper()}"
+
+    def get_student_name(self, obj):
+        if obj.student and obj.student.user:
+            return obj.student.user.get_full_name() or obj.student.user.username
+        return ""
+
+    def get_student_grade(self, obj):
+        if obj.student and obj.student.education_level:
+            return obj.student.education_level
+        if obj.batch and obj.batch.grade_level:
+            gl = str(obj.batch.grade_level).strip()
+            return gl if gl.lower().startswith("class") else f"Class {gl}"
+        return "Class 12"
+
+    def get_student_avatar(self, obj):
+        request = self.context.get('request')
+        if obj.student and obj.student.user and getattr(obj.student.user, 'profile_photo', None):
+            url = obj.student.user.profile_photo.url
+            return request.build_absolute_uri(url) if request else url
+        return None
+
+    def get_teacher_name(self, obj):
+        if obj.batch and obj.batch.teacher:
+            return obj.batch.teacher.display_name or obj.batch.teacher.user.get_full_name()
+        return ""
+
+    def get_teacher_subject(self, obj):
+        if obj.batch:
+            if obj.batch.subject:
+                return obj.batch.subject
+            if obj.batch.teacher and obj.batch.teacher.qualification:
+                return obj.batch.teacher.qualification
+        return ""
+
+    def get_teacher_avatar(self, obj):
+        request = self.context.get('request')
+        if obj.batch and obj.batch.teacher and obj.batch.teacher.user and getattr(obj.batch.teacher.user, 'profile_photo', None):
+            url = obj.batch.teacher.user.profile_photo.url
+            return request.build_absolute_uri(url) if request else url
+        return None
+
+    def get_batch_code(self, obj):
+        if obj.batch:
+            sub = (obj.batch.subject or "BAT")[:3].upper()
+            return f"{sub}-{str(obj.batch.id)[:5].upper()}"
+        return ""
+
+    def get_batch_price(self, obj):
+        if obj.batch:
+            return float(obj.batch.price)
+        return 0.0
+
+    def get_formatted_price(self, obj):
+        if obj.batch:
+            return f"₹{int(obj.batch.price):,}"
+        return "₹0"
+
+    def get_formatted_date(self, obj):
+        if obj.requested_at:
+            return obj.requested_at.strftime("%d %b %Y, %I:%M %p")
+        return ""
+
+    def get_status_display(self, obj):
+        if obj.status in ['ACTIVE', 'APPROVED', 'PAYMENT_COMPLETED']:
+            return "Confirmed"
+        if obj.status in ['REJECTED', 'CANCELLED']:
+            return "Rejected"
+        if obj.payment_status == 'UNPAID' or obj.status == 'PENDING_PAYMENT':
+            return "Payment Pending"
+        if obj.status == 'REQUESTED':
+            return "Pending"
+        return obj.status.replace('_', ' ').title()
+
+    def get_payment_status_display(self, obj):
+        if obj.payment_status == 'PAID':
+            return "Paid"
+        if obj.payment_status == 'UNPAID':
+            return "Payment Pending"
+        return obj.payment_status.replace('_', ' ').title()
 
 class EnrollmentActionSerializer(serializers.Serializer):
     action = serializers.ChoiceField(choices=['APPROVE', 'REJECT'])
@@ -459,17 +642,85 @@ class AttendanceSerializer(serializers.ModelSerializer):
 # ==========================================
 
 class StudyMaterialSerializer(serializers.ModelSerializer):
+    teacher = serializers.PrimaryKeyRelatedField(queryset=TeacherProfile.objects.all(), required=False, allow_null=True)
     batch_title = serializers.CharField(source='batch.title', read_only=True)
-    teacher_name = serializers.CharField(source='teacher.user.get_full_name', read_only=True)
+    batch_code = serializers.SerializerMethodField()
+    teacher_name = serializers.SerializerMethodField()
+    teacher_qualification = serializers.SerializerMethodField()
+    teacher_avatar = serializers.SerializerMethodField()
+    formatted_size = serializers.ReadOnlyField()
+    chapters_display = serializers.SerializerMethodField()
+    status_display = serializers.SerializerMethodField()
+    uploaded_date = serializers.SerializerMethodField()
+    file_url = serializers.SerializerMethodField()
 
     class Meta:
         model = StudyMaterial
         fields = (
-            'id', 'batch', 'batch_title', 'teacher', 'teacher_name',
-            'title', 'description', 'file', 'file_type', 'size',
-            'is_downloadable', 'published_at'
+            'id', 'title', 'code', 'description',
+            'batch', 'batch_title', 'batch_code',
+            'teacher', 'teacher_name', 'teacher_qualification', 'teacher_avatar',
+            'file', 'file_url', 'file_type', 'size', 'formatted_size',
+            'chapters_count', 'chapters_display',
+            'status', 'status_display',
+            'views_count', 'downloads_count',
+            'is_downloadable', 'uploaded_date', 'published_at'
         )
-        read_only_fields = ('id', 'batch', 'teacher', 'teacher_name', 'file_type', 'size', 'published_at')
+        read_only_fields = ('id', 'batch_title', 'batch_code', 'teacher_name', 'teacher_qualification', 'teacher_avatar', 'file_type', 'size', 'formatted_size', 'published_at')
+
+    def validate(self, attrs):
+        batch = attrs.get('batch')
+        teacher = attrs.get('teacher')
+        if not teacher and batch and getattr(batch, 'teacher', None):
+            attrs['teacher'] = batch.teacher
+        return attrs
+
+    def get_batch_code(self, obj):
+        if obj.batch:
+            sub = (obj.batch.subject or "BAT")[:3].upper()
+            return f"{sub}-{str(obj.batch.id)[:5].upper()}"
+        return ""
+
+    def get_teacher_name(self, obj):
+        if obj.teacher:
+            return obj.teacher.display_name or obj.teacher.user.get_full_name()
+        return ""
+
+    def get_teacher_qualification(self, obj):
+        if obj.teacher:
+            return obj.teacher.qualification
+        return ""
+
+    def get_teacher_avatar(self, obj):
+        request = self.context.get('request')
+        if obj.teacher and obj.teacher.user and getattr(obj.teacher.user, 'profile_photo', None):
+            url = obj.teacher.user.profile_photo.url
+            return request.build_absolute_uri(url) if request else url
+        return None
+
+    def get_chapters_display(self, obj):
+        return f"{obj.chapters_count} Chapters"
+
+    def get_status_display(self, obj):
+        mapping = {
+            'PUBLISHED': 'Published',
+            'DRAFT': 'Draft',
+            'REPORTED': 'Reported',
+            'HIDDEN': 'Hidden'
+        }
+        return mapping.get(obj.status, obj.status.title())
+
+    def get_uploaded_date(self, obj):
+        if obj.published_at:
+            return obj.published_at.strftime("%d %b %Y")
+        return ""
+
+    def get_file_url(self, obj):
+        request = self.context.get('request')
+        if obj.file:
+            url = obj.file.url
+            return request.build_absolute_uri(url) if request else url
+        return None
 
 class BookmarkSerializer(serializers.ModelSerializer):
     material = StudyMaterialSerializer(read_only=True)
@@ -596,16 +847,61 @@ class ReviewSerializer(serializers.ModelSerializer):
     student_name = serializers.CharField(source='student.user.get_full_name', read_only=True)
     batch_title = serializers.CharField(source='batch.title', read_only=True)
     teacher_name = serializers.CharField(source='teacher.user.get_full_name', read_only=True)
+    reviewer = serializers.SerializerMethodField()
+    teacher_info = serializers.SerializerMethodField()
+    batch_code = serializers.SerializerMethodField()
+    formatted_date = serializers.SerializerMethodField()
+    status = serializers.CharField(required=False)
 
     class Meta:
         model = Review
         fields = (
-            'id', 'student', 'student_name', 'teacher', 'teacher_name',
-            'batch', 'batch_title', 'rating', 'teaching_quality',
-            'doubt_solving', 'punctuality', 'notes_quality',
-            'comment', 'status', 'created_at', 'updated_at'
+            'id', 'student', 'student_name', 'reviewer',
+            'teacher', 'teacher_name', 'teacher_info',
+            'batch', 'batch_title', 'batch_code',
+            'rating', 'teaching_quality', 'doubt_solving', 'punctuality', 'notes_quality',
+            'comment', 'status', 'formatted_date', 'created_at', 'updated_at'
         )
-        read_only_fields = ('id', 'student', 'teacher', 'batch', 'status', 'created_at', 'updated_at')
+        read_only_fields = ('id', 'student', 'teacher', 'batch', 'created_at', 'updated_at')
+
+    def get_reviewer(self, obj):
+        student = obj.student
+        return {
+            "id": str(student.id),
+            "name": student.user.get_full_name() or student.user.email,
+            "grade_level": getattr(student, 'grade_level', '') or 'Student',
+            "photo": student.user.profile_photo.url if getattr(student.user, 'profile_photo', None) else None
+        }
+
+    def get_teacher_info(self, obj):
+        teacher = obj.teacher
+        subjects = teacher.subjects if isinstance(teacher.subjects, list) else ([teacher.subjects] if teacher.subjects else [])
+        primary_subject = subjects[0] if subjects else obj.batch.subject
+        return {
+            "id": str(teacher.id),
+            "name": teacher.display_name or teacher.user.get_full_name(),
+            "subject": primary_subject,
+            "photo": teacher.user.profile_photo.url if getattr(teacher.user, 'profile_photo', None) else None
+        }
+
+    def get_batch_code(self, obj):
+        subject_prefix = (obj.batch.subject[:3] if obj.batch.subject else 'BAT').upper()
+        return f"{subject_prefix}-{str(obj.batch.id)[:4].upper()}"
+
+    def get_formatted_date(self, obj):
+        return obj.created_at.strftime("%d %b %Y") if obj.created_at else ""
+
+    def validate_status(self, value):
+        val = value.strip().upper()
+        if val in ['REMOVED', 'REMOVED BY ADMIN', 'REMOVED_BY_ADMIN', 'DISMISSED']:
+            return Review.Status.REMOVED
+        if val in ['FLAGGED', 'REPORTED', 'FLAGGED / REPORTED', 'PENDING']:
+            return Review.Status.FLAGGED
+        if val in ['PUBLISHED', 'APPROVED']:
+            return Review.Status.PUBLISHED
+        if val in Review.Status.values:
+            return val
+        raise serializers.ValidationError(f"Invalid status '{value}'. Allowed: {Review.Status.values}")
 
 class ReviewCreateSerializer(serializers.ModelSerializer):
     class Meta:
@@ -618,15 +914,112 @@ class ReviewCreateSerializer(serializers.ModelSerializer):
 class ReportSerializer(serializers.ModelSerializer):
     reporter_email = serializers.EmailField(source='reporter.email', read_only=True)
     resolved_by_email = serializers.EmailField(source='resolved_by.email', read_only=True, default='')
+    report_code = serializers.SerializerMethodField()
+    reported_user = serializers.SerializerMethodField()
+    filed_by = serializers.SerializerMethodField()
+    category = serializers.SerializerMethodField()
+    priority = serializers.SerializerMethodField()
+    formatted_date = serializers.SerializerMethodField()
+
+    status = serializers.CharField(required=False)
+    admin_note = serializers.CharField(required=False, allow_blank=True)
 
     class Meta:
         model = Report
         fields = (
-            'id', 'reporter', 'reporter_email', 'target_type', 'target_id',
-            'reason', 'description', 'status', 'admin_note',
-            'resolved_by', 'resolved_by_email', 'resolved_at', 'created_at'
+            'id', 'report_code', 'reporter', 'reporter_email', 'filed_by',
+            'target_type', 'target_id', 'reported_user',
+            'category', 'priority', 'reason', 'description', 'status', 'admin_note',
+            'resolved_by', 'resolved_by_email', 'resolved_at', 'formatted_date', 'created_at'
         )
-        read_only_fields = ('id', 'reporter', 'status', 'admin_note', 'resolved_by', 'resolved_at', 'created_at')
+        read_only_fields = ('id', 'reporter', 'resolved_by', 'resolved_at', 'created_at')
+
+    def validate_status(self, value):
+        val = value.strip().upper()
+        if val == 'DISMISSED':
+            return Report.Status.REJECTED
+        if val in Report.Status.values:
+            return val
+        raise serializers.ValidationError(f"Invalid status '{value}'. Allowed: {Report.Status.values} or DISMISSED")
+
+    def get_report_code(self, obj):
+        return f"REP-{str(obj.id)[:5].upper()}"
+
+    def get_formatted_date(self, obj):
+        return obj.created_at.strftime("%d %b %Y, %I:%M %p") if obj.created_at else ""
+
+    def get_category(self, obj):
+        text = f"{obj.reason or ''} {obj.description or ''}".lower()
+        if any(w in text for w in ['privacy', 'contact', 'number', 'phone', 'email']):
+            return "Privacy"
+        if any(w in text for w in ['abuse', 'rude', 'language', 'harass', 'threat', 'offensive']):
+            return "Abuse"
+        if any(w in text for w in ['spam', 'bot', 'fake', 'scam', 'fraud']):
+            return "Spam"
+        return "Other"
+
+    def get_priority(self, obj):
+        cat = self.get_category(obj)
+        if cat == "Privacy":
+            return "High"
+        elif cat == "Abuse":
+            return "Medium"
+        return "Low"
+
+    def get_filed_by(self, obj):
+        user = obj.reporter
+        return {
+            "id": str(user.id),
+            "name": user.get_full_name() or user.email,
+            "role": user.role.capitalize() if hasattr(user, 'role') else "Student",
+            "email": user.email,
+            "profile_photo": user.profile_photo.url if getattr(user, 'profile_photo', None) else None
+        }
+
+    def get_reported_user(self, obj):
+        from django.db.models import Q
+        from .models import TeacherProfile, StudentProfile, Batch, ClassContent
+        target_name = f"{obj.target_type} ({obj.target_id[:8]})"
+        target_role = obj.target_type.capitalize()
+        photo = None
+
+        try:
+            if obj.target_type == 'TEACHER':
+                teacher = TeacherProfile.objects.select_related('user').filter(
+                    Q(id=obj.target_id) | Q(user__id=obj.target_id)
+                ).first()
+                if teacher:
+                    target_name = teacher.display_name or teacher.user.get_full_name()
+                    target_role = "Teacher"
+                    photo = teacher.user.profile_photo.url if teacher.user.profile_photo else None
+            elif obj.target_type == 'STUDENT':
+                student = StudentProfile.objects.select_related('user').filter(
+                    Q(id=obj.target_id) | Q(user__id=obj.target_id)
+                ).first()
+                if student:
+                    target_name = student.user.get_full_name()
+                    target_role = "Student"
+                    photo = student.user.profile_photo.url if student.user.profile_photo else None
+            elif obj.target_type == 'BATCH':
+                batch = Batch.objects.filter(id=obj.target_id).first()
+                if batch:
+                    target_name = batch.title
+                    target_role = "Batch"
+                    photo = batch.thumbnail.url if batch.thumbnail else None
+            elif obj.target_type == 'CLASS':
+                cls = ClassContent.objects.filter(id=obj.target_id).first()
+                if cls:
+                    target_name = cls.title
+                    target_role = "Class Content"
+        except Exception:
+            pass
+
+        return {
+            "id": obj.target_id,
+            "name": target_name,
+            "role": target_role,
+            "photo": photo
+        }
 
 class ReportCreateSerializer(serializers.ModelSerializer):
     class Meta:
@@ -661,12 +1054,75 @@ class PaymentVerifySerializer(serializers.Serializer):
 class AuditLogSerializer(serializers.ModelSerializer):
     actor_email = serializers.EmailField(source='actor.email', read_only=True, default='SYSTEM')
     actor_name = serializers.CharField(source='actor.get_full_name', read_only=True, default='SYSTEM')
+    audit_code = serializers.SerializerMethodField()
+    category = serializers.SerializerMethodField()
+    admin_operator = serializers.SerializerMethodField()
+    target_entity = serializers.SerializerMethodField()
+    timestamp = serializers.SerializerMethodField()
+    notes = serializers.SerializerMethodField()
 
     class Meta:
         model = AuditLog
         fields = (
-            'id', 'actor', 'actor_email', 'actor_name', 'action',
-            'object_type', 'object_id', 'description', 'metadata',
+            'id', 'audit_code', 'action', 'category',
+            'actor', 'actor_email', 'actor_name', 'admin_operator',
+            'target_entity', 'object_type', 'object_id', 'description',
+            'notes', 'timestamp', 'metadata',
             'ip_address', 'user_agent', 'created_at'
         )
         read_only_fields = fields
+
+    def get_audit_code(self, obj):
+        if obj.metadata and obj.metadata.get('code'):
+            return obj.metadata.get('code')
+        return f"AUD-{str(obj.id)[:5].upper()}"
+
+    def get_category(self, obj):
+        if obj.metadata and obj.metadata.get('category'):
+            return obj.metadata.get('category')
+        mapping = {
+            'TeacherVerification': 'Verification',
+            'TEACHER_VERIFICATION': 'Verification',
+            'ConnectionRequest': 'Privacy',
+            'Enrollment': 'Enrollment',
+            'Review': 'Moderation',
+            'Report': 'Safety',
+            'PlatformAnnouncement': 'Communications',
+            'PromotionalBanner': 'Marketing',
+            'Payment': 'Financial'
+        }
+        return mapping.get(obj.object_type, 'General')
+
+    def get_admin_operator(self, obj):
+        name = (obj.actor.get_full_name() if obj.actor else None) or "Super Admin"
+        email = (obj.actor.email if obj.actor else None) or "sudhanshu@tutoron.in"
+        ip = obj.ip_address or "103.21.144.18"
+        location = (obj.metadata and obj.metadata.get('location')) or "New Delhi, India"
+        return {
+            "name": name,
+            "email": email,
+            "display": f"{name} ({email})",
+            "ip_address": ip,
+            "location": location,
+            "ip_display": f"{ip} ({location})"
+        }
+
+    def get_target_entity(self, obj):
+        name = (obj.metadata and obj.metadata.get('target_name')) or obj.description or f"{obj.object_type}: {obj.object_id}"
+        code = (obj.metadata and obj.metadata.get('target_code')) or f"{obj.object_type[:3].upper()}-{str(obj.object_id)[:5].upper()}"
+        return {
+            "name": name,
+            "code": code,
+            "type": obj.object_type,
+            "id": obj.object_id
+        }
+
+    def get_timestamp(self, obj):
+        if obj.created_at:
+            return obj.created_at.strftime("%Y-%m-%d %H:%M:%S IST")
+        return ""
+
+    def get_notes(self, obj):
+        if obj.metadata and obj.metadata.get('notes'):
+            return obj.metadata.get('notes')
+        return obj.description

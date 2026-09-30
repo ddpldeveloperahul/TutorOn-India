@@ -96,7 +96,7 @@ python manage.py runserver
 
 ### Batches (`/api/v1/batches/`)
 - `GET /api/v1/batches/` - Public published batches
-- `GET /api/v1/batches/{slug}/` - Batch detail by slug
+- `GET /api/v1/batches/{id}/` - Batch detail by ID
 - `POST /api/v1/batches/{id}/enroll/` - Student enrollment request
 - `GET|POST /api/v1/batches/{id}/announcements/` - Batch announcements
 - `GET|POST|PATCH|DELETE /api/v1/teacher/batches/` - Teacher batch management

@@ -57,7 +57,8 @@ from .views import (
     AdminUsersListView, AdminTeacherVerificationsListView,
     AdminTeacherVerificationDetailView, AdminTeacherVerificationApproveView,
     AdminTeacherVerificationRejectView, AdminConnectionsListView,
-    AdminBatchesListView, AdminEnrollmentsListView, AdminReviewsListView,
+    AdminBatchesListView, AdminEnrollmentsListView, AdminAnnouncementsListView, AdminPromotionalBannersViewSet,
+    AdminStudyMaterialsListView, AdminReviewsListView,
     AdminReportsListView, AdminReportResolveView, AdminPaymentsListView,
     AdminAuditLogsListView, AdminConnectionApproveView, AdminConnectionRejectView,
     AdminSendClassRemindersView
@@ -67,6 +68,22 @@ router = DefaultRouter()
 router.register(r'blocks', UserBlockViewSet, basename='user-blocks')
 router.register(r'teacher/batches', TeacherBatchViewSet, basename='teacher-batches')
 router.register(r'students', StudentViewSet, basename='students')
+router.register(r'admin/enrollments', AdminEnrollmentsListView, basename='admin-enrollments')
+router.register(r'admin/announcements', AdminAnnouncementsListView, basename='admin-announcements')
+router.register(r'announcements-promotions', AdminAnnouncementsListView, basename='announcements-promotions')
+router.register(r'announcements', AdminAnnouncementsListView, basename='announcements')
+router.register(r'admin/banners', AdminPromotionalBannersViewSet, basename='admin-banners')
+router.register(r'admin/promotional-banners', AdminPromotionalBannersViewSet, basename='admin-promotional-banners')
+router.register(r'banners', AdminPromotionalBannersViewSet, basename='public-banners')
+router.register(r'admin/materials', AdminStudyMaterialsListView, basename='admin-materials')
+router.register(r'admin/study-materials', AdminStudyMaterialsListView, basename='admin-study-materials')
+router.register(r'content/study-materials', AdminStudyMaterialsListView, basename='content-study-materials')
+router.register(r'admin/batches', AdminBatchesListView, basename='admin-batches')
+router.register(r'admin/reviews', AdminReviewsListView, basename='admin-reviews')
+router.register(r'admin/reports', AdminReportsListView, basename='admin-reports')
+router.register(r'admin/payments', AdminPaymentsListView, basename='admin-payments')
+router.register(r'admin/audit-logs', AdminAuditLogsListView, basename='admin-audit-logs')
+router.register(r'admin/connections', AdminConnectionsListView, basename='admin-connections')
 
 urlpatterns = [
     # Auth
@@ -106,7 +123,7 @@ urlpatterns = [
 
     # Batches
     path('batches/', BatchPublicListView.as_view(), name='batch-public-list'),
-    path('batches/<slug:slug>/', BatchPublicDetailView.as_view(), name='batch-public-detail'),
+    path('batches/<uuid:id>/', BatchPublicDetailView.as_view(), name='batch-public-detail'),
     path('batches/<uuid:batch_id>/announcements/', BatchAnnouncementView.as_view(), name='batch-announcements'),
     path('batches/<uuid:batch_id>/enroll/', BatchEnrollRequestView.as_view(), name='batch-enroll'),
 
@@ -158,25 +175,25 @@ urlpatterns = [
     path('admin/dashboard/activity/', AdminDashboardActivityView.as_view(), name='admin-dashboard-activity'),
     path('admin/dashboard/search/', AdminDashboardSearchView.as_view(), name='admin-dashboard-search'),
     path('admin/users/', AdminUsersListView.as_view(), name='admin-users-list'),
-    path('admin/teachers/', TeacherViewSet.as_view({'get': 'list', 'post': 'create'}), name='admin-teachers-list'),
+    path('admin/teachers/', TeacherViewSet.as_view({'get': 'list', 'post': 'create','delete':'destroy'}), name='admin-teachers-list'),
     path('admin/teachers/<uuid:id>/', TeacherViewSet.as_view({'get': 'retrieve', 'put': 'update', 'patch': 'partial_update', 'delete': 'destroy'}), name='admin-teacher-detail'),
-    path('admin/students/', StudentViewSet.as_view({'get': 'list', 'post': 'create'}), name='admin-students-list'),
+    path('admin/students/', StudentViewSet.as_view({'get': 'list', 'post': 'create','delete':'destroy'}), name='admin-students-list'),
     path('admin/students/<uuid:id>/', StudentViewSet.as_view({'get': 'retrieve', 'put': 'update', 'patch': 'partial_update', 'delete': 'destroy'}), name='admin-student-detail'),
     path('admin/teacher-verifications/', AdminTeacherVerificationsListView.as_view(), name='admin-teacher-verifications-list'),
     path('admin/teacher-verifications/<uuid:id>/', AdminTeacherVerificationDetailView.as_view(), name='admin-teacher-verification-detail'),
     path('admin/teacher-verifications/<uuid:id>/approve/', AdminTeacherVerificationApproveView.as_view(), name='admin-teacher-verification-approve'),
     path('admin/teacher-verifications/<uuid:id>/reject/', AdminTeacherVerificationRejectView.as_view(), name='admin-teacher-verification-reject'),
-    path('admin/connections/', AdminConnectionsListView.as_view(), name='admin-connections-list'),
+    # path('admin/connections/', AdminConnectionsListView.as_view(), name='admin-connections-list'),
     path('admin/connections/<uuid:id>/approve/', AdminConnectionApproveView.as_view(), name='admin-connection-approve'),
     path('admin/connections/<uuid:id>/reject/', AdminConnectionRejectView.as_view(), name='admin-connection-reject'),
     path('admin/classes/send-reminders/', AdminSendClassRemindersView.as_view(), name='admin-send-class-reminders'),
-    path('admin/batches/', AdminBatchesListView.as_view(), name='admin-batches-list'),
-    path('admin/enrollments/', AdminEnrollmentsListView.as_view(), name='admin-enrollments-list'),
-    path('admin/reviews/', AdminReviewsListView.as_view(), name='admin-reviews-list'),
-    path('admin/reports/', AdminReportsListView.as_view(), name='admin-reports-list'),
+    # path('admin/batches/', AdminBatchesListView.as_view(), name='admin-batches-list'),
+    # path('admin/enrollments/', AdminEnrollmentsListView.as_view(), name='admin-enrollments-list'),
+    # path('admin/reviews/', AdminReviewsListView.as_view(), name='admin-reviews-list'),
+    # path('admin/reports/', AdminReportsListView.as_view(), name='admin-reports-list'),
     path('admin/reports/<uuid:id>/resolve/', AdminReportResolveView.as_view(), name='admin-report-resolve'),
-    path('admin/payments/', AdminPaymentsListView.as_view(), name='admin-payments-list'),
-    path('admin/audit-logs/', AdminAuditLogsListView.as_view(), name='admin-audit-logs-list'),
+    # path('admin/payments/', AdminPaymentsListView.as_view(), name='admin-payments-list'),
+    # path('admin/audit-logs/', AdminAuditLogsListView.as_view(), name='admin-audit-logs-list'),
 
     # Routers
     path('', include(router.urls)),

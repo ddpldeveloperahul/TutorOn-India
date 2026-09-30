@@ -262,6 +262,8 @@ class Batch(TimeStampedUUIDModel):
     language = models.CharField(max_length=50, blank=True, default='English')
     start_date = models.DateField(null=True, blank=True)
     end_date = models.DateField(null=True, blank=True)
+    start_time = models.TimeField(null=True, blank=True, help_text="Batch class start time")
+    end_time = models.TimeField(null=True, blank=True, help_text="Batch class end time")
     capacity = models.PositiveIntegerField(default=30)
     price = models.DecimalField(max_digits=10, decimal_places=2, default=0.0)
     is_free = models.BooleanField(default=False)
@@ -277,6 +279,14 @@ class Batch(TimeStampedUUIDModel):
         verbose_name = 'Batch'
         verbose_name_plural = 'Batches'
         ordering = ['-created_at']
+
+    @property
+    def timing(self):
+        if self.start_time and self.end_time:
+            return f"{self.start_time.strftime('%I:%M %p')} - {self.end_time.strftime('%I:%M %p')}"
+        elif self.start_time:
+            return self.start_time.strftime('%I:%M %p')
+        return None
 
     def __str__(self):
         return f"{self.title} ({self.subject}) - {self.teacher.display_name or self.teacher.user.get_full_name()}"
@@ -303,6 +313,70 @@ class BatchAnnouncement(TimeStampedUUIDModel):
 
     def __str__(self):
         return f"Announcement: {self.title} ({self.batch.title})"
+
+
+class PlatformAnnouncement(TimeStampedUUIDModel):
+    class Type(models.TextChoices):
+        IMPORTANT = 'IMPORTANT', 'Important'
+        PROMOTIONAL = 'PROMOTIONAL', 'Promotional'
+        GENERAL = 'GENERAL', 'General'
+
+    class Audience(models.TextChoices):
+        ALL_USERS = 'ALL_USERS', 'All Users'
+        STUDENTS = 'STUDENTS', 'Students'
+        TEACHERS = 'TEACHERS', 'Teachers'
+
+    class Status(models.TextChoices):
+        PUBLISHED = 'PUBLISHED', 'Published'
+        SCHEDULED = 'SCHEDULED', 'Scheduled'
+        DRAFT = 'DRAFT', 'Draft'
+        EXPIRED = 'EXPIRED', 'Expired'
+
+    title = models.CharField(max_length=255)
+    code = models.CharField(max_length=50, blank=True, default='')
+    description = models.TextField(blank=True, default='')
+    announcement_type = models.CharField(
+        max_length=20,
+        choices=Type.choices,
+        default=Type.GENERAL,
+        db_index=True
+    )
+    audience = models.CharField(
+        max_length=20,
+        choices=Audience.choices,
+        default=Audience.ALL_USERS,
+        db_index=True
+    )
+    status = models.CharField(
+        max_length=20,
+        choices=Status.choices,
+        default=Status.DRAFT,
+        db_index=True
+    )
+    start_date = models.DateField(null=True, blank=True)
+    end_date = models.DateField(null=True, blank=True)
+    author = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='platform_announcements'
+    )
+    banner_image = models.ImageField(upload_to='announcements/%Y/%m/', null=True, blank=True)
+    cta_label = models.CharField(max_length=100, blank=True, default='')
+    cta_url = models.CharField(max_length=255, blank=True, default='')
+    is_banner = models.BooleanField(default=False, db_index=True)
+    slot = models.PositiveIntegerField(default=1, null=True, blank=True)
+    impressions_count = models.PositiveIntegerField(default=0)
+    clicks_count = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        verbose_name = 'Platform Announcement'
+        verbose_name_plural = 'Platform Announcements'
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"{self.title} ({self.status})"
 
 
 # ==========================================
@@ -462,13 +536,29 @@ class Attendance(TimeStampedUUIDModel):
 # ==========================================
 
 class StudyMaterial(TimeStampedUUIDModel):
+    class Status(models.TextChoices):
+        PUBLISHED = 'PUBLISHED', 'Published'
+        DRAFT = 'DRAFT', 'Draft'
+        REPORTED = 'REPORTED', 'Reported / Flagged'
+        HIDDEN = 'HIDDEN', 'Hidden by Admin'
+
     batch = models.ForeignKey(Batch, on_delete=models.CASCADE, related_name='materials')
     teacher = models.ForeignKey(TeacherProfile, on_delete=models.CASCADE, related_name='materials')
     title = models.CharField(max_length=255)
+    code = models.CharField(max_length=50, blank=True, default='')
     description = models.TextField(blank=True, default='')
-    file = models.FileField(upload_to='materials/%Y/%m/')
-    file_type = models.CharField(max_length=50, blank=True, default='')
+    file = models.FileField(upload_to='materials/%Y/%m/', null=True, blank=True)
+    file_type = models.CharField(max_length=50, blank=True, default='PDF')
     size = models.PositiveIntegerField(default=0, help_text="File size in bytes")
+    chapters_count = models.PositiveIntegerField(default=3)
+    status = models.CharField(
+        max_length=20,
+        choices=Status.choices,
+        default=Status.PUBLISHED,
+        db_index=True
+    )
+    views_count = models.PositiveIntegerField(default=0)
+    downloads_count = models.PositiveIntegerField(default=0)
     is_downloadable = models.BooleanField(default=True)
     published_at = models.DateTimeField(auto_now_add=True)
 
@@ -479,6 +569,14 @@ class StudyMaterial(TimeStampedUUIDModel):
 
     def __str__(self):
         return f"{self.title} ({self.batch.title})"
+
+    @property
+    def formatted_size(self):
+        if self.size >= 1024 * 1024:
+            return f"{self.size / (1024 * 1024):.1f} MB"
+        elif self.size >= 1024:
+            return f"{self.size / 1024:.0f} KB"
+        return f"{self.size} B"
 
     def save(self, *args, **kwargs):
         if self.file and hasattr(self.file, 'size') and not self.size:
@@ -665,6 +763,7 @@ class Review(TimeStampedUUIDModel):
     class Status(models.TextChoices):
         PUBLISHED = 'PUBLISHED', 'Published'
         PENDING = 'PENDING', 'Pending Moderation'
+        FLAGGED = 'FLAGGED', 'Flagged'
         HIDDEN = 'HIDDEN', 'Hidden'
         REMOVED = 'REMOVED', 'Removed by Admin'
 
@@ -751,8 +850,8 @@ class Report(TimeStampedUUIDModel):
     resolved_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
-        verbose_name = 'Abuse Report'
-        verbose_name_plural = 'Abuse Reports'
+        verbose_name = 'Report'
+        verbose_name_plural = 'Reports'
         ordering = ['-created_at']
 
 

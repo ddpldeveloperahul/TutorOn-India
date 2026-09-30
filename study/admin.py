@@ -4,7 +4,7 @@ from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
 from .models import (
     User, UserBlock,
     StudentProfile, TeacherProfile, TeacherVerification,
-    Batch, BatchAnnouncement, Enrollment, ClassContent, Attendance,
+    Batch, BatchAnnouncement, PlatformAnnouncement, Enrollment, ClassContent, Attendance,
     StudyMaterial, Bookmark, ConnectionRequest, ContactAccess,
     Conversation, Message, Notification,
     Review, Report, Payment, AuditLog
@@ -75,7 +75,7 @@ class TeacherVerificationAdmin(admin.ModelAdmin):
 
 @admin.register(Batch)
 class BatchAdmin(admin.ModelAdmin):
-    list_display = ('title', 'teacher', 'subject', 'price', 'is_free', 'status', 'capacity', 'start_date', 'created_at')
+    list_display = ('title', 'teacher', 'subject', 'price', 'is_free', 'status', 'capacity', 'start_date','start_time','end_time','created_at')
     list_filter = ('status', 'subject', 'is_free')
     search_fields = ('title', 'teacher__user__first_name', 'teacher__user__last_name', 'subject')
     prepopulated_fields = {'slug': ('title',)}
@@ -85,6 +85,12 @@ class BatchAnnouncementAdmin(admin.ModelAdmin):
     list_display = ('title', 'batch', 'teacher', 'published_at')
     list_filter = ('published_at',)
     search_fields = ('title', 'batch__title', 'teacher__user__first_name')
+
+@admin.register(PlatformAnnouncement)
+class PlatformAnnouncementAdmin(admin.ModelAdmin):
+    list_display = ('title', 'code', 'announcement_type', 'audience', 'status', 'start_date', 'end_date', 'author', 'created_at')
+    list_filter = ('status', 'announcement_type', 'audience')
+    search_fields = ('title', 'code', 'description')
 
 @admin.register(Enrollment)
 class EnrollmentAdmin(admin.ModelAdmin):
@@ -113,9 +119,9 @@ class AttendanceAdmin(admin.ModelAdmin):
 
 @admin.register(StudyMaterial)
 class StudyMaterialAdmin(admin.ModelAdmin):
-    list_display = ('title', 'batch', 'teacher', 'file_type', 'is_downloadable', 'published_at')
-    list_filter = ('file_type', 'is_downloadable')
-    search_fields = ('title', 'batch__title')
+    list_display = ('title', 'code', 'batch', 'teacher', 'file_type', 'status', 'chapters_count', 'downloads_count', 'views_count', 'published_at')
+    list_filter = ('status', 'file_type', 'is_downloadable', 'published_at')
+    search_fields = ('title', 'code', 'batch__title', 'teacher__user__first_name', 'teacher__user__last_name')
 
 @admin.register(Bookmark)
 class BookmarkAdmin(admin.ModelAdmin):
