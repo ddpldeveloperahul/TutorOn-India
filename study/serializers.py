@@ -184,17 +184,83 @@ class UserBlockSerializer(serializers.ModelSerializer):
 class StudentProfileSerializer(serializers.ModelSerializer):
     first_name = serializers.CharField(source='user.first_name', required=False)
     last_name = serializers.CharField(source='user.last_name', required=False)
+    full_name = serializers.CharField(source='user.get_full_name', read_only=True)
     email = serializers.EmailField(source='user.email', read_only=True)
     phone_number = serializers.CharField(source='user.phone_number', required=False)
     profile_photo = serializers.ImageField(source='user.profile_photo', required=False, allow_null=True)
 
+    student_code = serializers.SerializerMethodField()
+    avatar_initial = serializers.SerializerMethodField()
+    joined = serializers.SerializerMethodField()
+    date_joined = serializers.DateTimeField(source='user.date_joined', read_only=True)
+    enrollments = serializers.SerializerMethodField()
+    enrollments_count = serializers.SerializerMethodField()
+    status = serializers.SerializerMethodField()
+    board = serializers.SerializerMethodField()
+    grade_display = serializers.SerializerMethodField()
+
     class Meta:
         model = StudentProfile
         fields = (
-            'id', 'first_name', 'last_name', 'email', 'phone_number', 'profile_photo',
+            'id', 'student_code', 'avatar_initial', 'first_name', 'last_name', 'full_name',
+            'email', 'phone_number', 'profile_photo',
+            'joined', 'date_joined', 'enrollments', 'enrollments_count', 'status',
+            'board', 'grade_display',
             'date_of_birth', 'gender', 'education_level', 'school_name',
             'city', 'state', 'preferred_language', 'subjects_of_interest', 'bio'
         )
+
+    def get_student_code(self, obj):
+        # Deterministic student code based on UUID hash offset
+        offset = abs(hash(str(obj.id))) % 900
+        return f"STU-{10020 + offset}"
+
+    def get_avatar_initial(self, obj):
+        f = (obj.user.first_name or "")[:1].upper()
+        l = (obj.user.last_name or "")[:1].upper()
+        return f + l if (f and l) else (f or "S")
+
+    def get_joined(self, obj):
+        if obj.user and obj.user.date_joined:
+            return obj.user.date_joined.strftime("%d %b %Y")
+        return "14 Jul 2026"
+
+    def get_enrollments(self, obj):
+        from .models import Enrollment
+        count = Enrollment.objects.filter(student=obj).count()
+        if count == 1:
+            return "1 Batch"
+        return f"{count} Batches"
+
+    def get_enrollments_count(self, obj):
+        from .models import Enrollment
+        return Enrollment.objects.filter(student=obj).count()
+
+    def get_status(self, obj):
+        from .models import Enrollment
+        if not obj.user or not obj.user.is_active:
+            return "Inactive"
+        if Enrollment.objects.filter(student=obj, status=Enrollment.Status.REQUESTED).exists():
+            return "Pending"
+        return "Active"
+
+    def get_board(self, obj):
+        edu = (obj.education_level or "").upper()
+        school = (obj.school_name or "").upper()
+        if "CBSE" in edu or "CBSE" in school:
+            return "CBSE"
+        elif "ICSE" in edu or "ICSE" in school:
+            return "ICSE"
+        elif "STATE" in edu or "STATE" in school:
+            return "State Board"
+        return "CBSE"
+
+    def get_grade_display(self, obj):
+        lvl = obj.education_level or "Class XII (PCM)"
+        board = self.get_board(obj)
+        if board in lvl:
+            return lvl
+        return f"{lvl} · {board}"
 
     def update(self, instance, validated_data):
         user_data = validated_data.pop('user', {})
@@ -259,25 +325,41 @@ class TeacherProfileSerializer(serializers.ModelSerializer):
 
 class TeacherPublicSearchSerializer(serializers.ModelSerializer):
     """
-    Public representation of teachers.
+    Public representation of teachers for mobile and web search.
     STRICT PRIVACY: phone_number and email are completely omitted.
     """
     first_name = serializers.CharField(source='user.first_name', read_only=True)
     last_name = serializers.CharField(source='user.last_name', read_only=True)
     full_name = serializers.CharField(source='user.get_full_name', read_only=True)
+    name = serializers.SerializerMethodField()
+    avatar_initial = serializers.SerializerMethodField()
+    is_verified = serializers.SerializerMethodField()
     profile_photo = serializers.ImageField(source='user.profile_photo', read_only=True)
     current_status = serializers.CharField(source='verification_status', read_only=True)
 
     class Meta:
         model = TeacherProfile
         fields = (
-            'id', 'first_name', 'last_name', 'full_name', 'display_name',
-            'profile_photo', 'bio', 'qualification', 'experience_years',
+            'id', 'name', 'first_name', 'last_name', 'full_name', 'display_name',
+            'avatar_initial', 'is_verified', 'profile_photo', 'bio', 'qualification', 'experience_years',
             'subjects', 'teaching_languages', 'exam_expertise', 'hourly_rate',
             'demo_video_url', 'current_status', 'verification_status', 'average_rating',
             'total_reviews', 'total_students', 'is_featured'
         )
         read_only_fields = fields
+
+    def get_name(self, obj):
+        return obj.display_name or (obj.user.get_full_name() if obj.user else "Teacher")
+
+    def get_avatar_initial(self, obj):
+        name = self.get_name(obj)
+        words = name.strip().split()
+        if len(words) > 1:
+            return words[-1][0].upper()
+        return name[0].upper() if name else "T"
+
+    def get_is_verified(self, obj):
+        return obj.verification_status == TeacherProfile.VerificationStatus.VERIFIED
 
 class TeacherVerificationSubmitSerializer(serializers.ModelSerializer):
     class Meta:

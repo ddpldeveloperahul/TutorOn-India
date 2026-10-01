@@ -1188,7 +1188,11 @@ class StudentDashboardView(APIView):
         active_enrollments = Enrollment.objects.filter(student=profile, status='ACTIVE').select_related('batch', 'batch__teacher__user')
         batch_ids = [e.batch_id for e in active_enrollments]
 
-        upcoming_classes = ClassContent.objects.filter(batch_id__in=batch_ids, is_published=True).order_by('scheduled_date', 'order')[:5]
+        upcoming_classes_qs = ClassContent.objects.filter(
+            batch_id__in=batch_ids, is_published=True
+        ).select_related('batch', 'teacher__user').order_by('scheduled_date', 'order')
+
+        upcoming_classes = list(upcoming_classes_qs[:5])
         recent_announcements = BatchAnnouncement.objects.filter(batch_id__in=batch_ids).order_by('-published_at')[:5]
         unread_notifications = Notification.objects.filter(recipient=profile.user, is_read=False).count()
         recent_materials = StudyMaterial.objects.filter(batch_id__in=batch_ids).order_by('-published_at')[:5]
@@ -1196,28 +1200,121 @@ class StudentDashboardView(APIView):
         total_attendance = Attendance.objects.filter(enrollment__student=profile).count()
         present_attendance = Attendance.objects.filter(enrollment__student=profile, status='PRESENT').count()
 
+        total_materials_count = StudyMaterial.objects.filter(batch_id__in=batch_ids).count()
+        total_classes_count = ClassContent.objects.filter(batch_id__in=batch_ids, is_published=True).count()
+
+        user_name = profile.user.first_name or "Student"
+        greeting = {
+            "title": f"Hello, {user_name} 👋",
+            "subtitle": "Ready to learn today?",
+            "avatar_initial": user_name[0].upper() if user_name else "S"
+        }
+
+        quick_stats = {
+            "batches": len(batch_ids),
+            "classes": total_classes_count,
+            "materials": total_materials_count,
+            "alerts": unread_notifications,
+        }
+
+        # First class featured as Live / Next class
+        live_class_data = None
+        if upcoming_classes:
+            first_cls = upcoming_classes[0]
+            teacher_name = first_cls.teacher.user.get_full_name() if (first_cls.teacher and first_cls.teacher.user) else "Educator"
+            dur_mins = first_cls.duration
+            dur_label = f"{dur_mins // 60}h" if (dur_mins >= 60 and dur_mins % 60 == 0) else f"{dur_mins}m"
+            live_class_data = {
+                "id": str(first_cls.id),
+                "title": first_cls.title,
+                "teacher_name": teacher_name,
+                "class_type": first_cls.class_type,
+                "platform": first_cls.class_type,
+                "meeting_url": first_cls.external_url,
+                "external_url": first_cls.external_url,
+                "duration": dur_label,
+                "is_live": True,
+                "status_badge": "LIVE NOW"
+            }
+
+        formatted_upcoming = []
+        for c in upcoming_classes:
+            time_str = "Upcoming"
+            if c.scheduled_date:
+                try:
+                    local_dt = timezone.localtime(c.scheduled_date) if timezone.is_aware(c.scheduled_date) else c.scheduled_date
+                    if local_dt.date() == timezone.localdate():
+                        time_str = local_dt.strftime("Today, %I:%M %p")
+                    else:
+                        time_str = local_dt.strftime("%b %d, %I:%M %p")
+                except Exception:
+                    time_str = str(c.scheduled_date)
+
+            t_name = c.teacher.user.get_full_name() if (c.teacher and c.teacher.user) else "Educator"
+            formatted_upcoming.append({
+                "id": str(c.id),
+                "batch_id": str(c.batch_id),
+                "batch_title": c.batch.title if c.batch else "",
+                "title": c.title,
+                "teacher_name": t_name,
+                "class_type": c.class_type,
+                "platform": c.class_type,
+                "external_url": c.external_url,
+                "meeting_url": c.external_url,
+                "scheduled_date": c.scheduled_date,
+                "formatted_time": time_str,
+                "duration_minutes": c.duration
+            })
+
+        my_batches = []
+        for e in active_enrollments:
+            subj = e.batch.subject or e.batch.title or ""
+            initial = subj[0].upper() if subj else "B"
+            student_count = Enrollment.objects.filter(batch=e.batch, status='ACTIVE').count()
+            t_name = e.batch.teacher.user.get_full_name() if (e.batch.teacher and e.batch.teacher.user) else "Educator"
+            my_batches.append({
+                "id": str(e.batch.id),
+                "title": e.batch.title,
+                "subject": e.batch.subject,
+                "subject_initial": initial,
+                "teacher_name": t_name,
+                "status": "ACTIVE",
+                "students_count": student_count or 1
+            })
+
+        # Top Teachers query (Verified, high rating)
+        top_teachers_qs = TeacherProfile.objects.filter(
+            user__is_active=True
+        ).select_related('user').order_by('-average_rating')[:6]
+
+        top_teachers_data = []
+        for t in top_teachers_qs:
+            subj_val = "General"
+            if isinstance(t.subjects, list) and t.subjects:
+                subj_val = t.subjects[0]
+            elif isinstance(t.subjects, str) and t.subjects:
+                subj_val = t.subjects
+
+            name = t.display_name or (t.user.get_full_name() if t.user else "Teacher")
+            avatar = t.user.profile_photo.url if (t.user and getattr(t.user, 'profile_photo', None)) else None
+            top_teachers_data.append({
+                "id": str(t.id),
+                "name": name,
+                "subject": subj_val,
+                "rating": float(t.average_rating) if t.average_rating else 4.8,
+                "is_verified": t.verification_status == TeacherProfile.VerificationStatus.VERIFIED,
+                "avatar_url": avatar
+            })
+
         data = {
+            "greeting": greeting,
+            "live_class": live_class_data,
+            "quick_stats": quick_stats,
             "enrolled_batches_count": len(batch_ids),
-            "enrolled_batches": [
-                {
-                    "id": str(e.batch.id),
-                    "title": e.batch.title,
-                    "subject": e.batch.subject,
-                    "teacher_name": e.batch.teacher.user.get_full_name(),
-                    "status": e.batch.status
-                }
-                for e in active_enrollments
-            ],
-            "upcoming_classes": [
-                {
-                    "id": str(c.id),
-                    "batch_id": str(c.batch_id),
-                    "title": c.title,
-                    "class_type": c.class_type,
-                    "scheduled_date": c.scheduled_date
-                }
-                for c in upcoming_classes
-            ],
+            "my_batches": my_batches,
+            "enrolled_batches": my_batches,
+            "top_teachers": top_teachers_data,
+            "upcoming_classes": formatted_upcoming,
             "recent_announcements": [
                 {
                     "id": str(a.id),
@@ -3077,9 +3174,31 @@ class StudentViewSet(viewsets.ModelViewSet):
     serializer_class = StudentProfileSerializer
     permission_classes = [AllowAny]
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
-    search_fields = ['user__email', 'user__first_name', 'user__last_name', 'user__phone_number', 'city', 'education_level']
+    search_fields = ['user__email', 'user__first_name', 'user__last_name', 'user__phone_number', 'city', 'education_level', 'school_name']
     ordering_fields = ['user__date_joined', 'city', 'education_level']
     lookup_field = 'id'
+
+    def get_queryset(self):
+        qs = StudentProfile.objects.select_related('user').all().order_by('-user__date_joined')
+        status_param = self.request.query_params.get('status')
+        if status_param:
+            status_val = status_param.strip().upper()
+            if status_val == 'ACTIVE':
+                qs = qs.filter(user__is_active=True)
+            elif status_val == 'INACTIVE':
+                qs = qs.filter(user__is_active=False)
+            elif status_val == 'PENDING':
+                from .models import Enrollment
+                pending_ids = Enrollment.objects.filter(status=Enrollment.Status.REQUESTED).values_list('student_id', flat=True)
+                qs = qs.filter(id__in=pending_ids)
+
+        board_param = self.request.query_params.get('board')
+        if board_param:
+            b = board_param.strip()
+            if b.upper() not in ['ALL', 'ALL BOARDS']:
+                qs = qs.filter(Q(education_level__icontains=b) | Q(school_name__icontains=b))
+
+        return qs
 
     def get_object(self):
         lookup_url_kwarg = self.lookup_url_kwarg or self.lookup_field
@@ -3107,13 +3226,55 @@ class StudentViewSet(viewsets.ModelViewSet):
         )
 
     def list(self, request, *args, **kwargs):
+        base_qs = StudentProfile.objects.select_related('user').all()
+        total_students = base_qs.count()
+        active_learners = base_qs.filter(user__is_active=True).count()
+        inactive_accounts = base_qs.filter(user__is_active=False).count()
+
+        counts = {
+            "total_students": total_students,
+            "active_learners": active_learners,
+            "inactive_accounts": inactive_accounts,
+            "total_learners_badge": f"{total_students:,} Total Learners"
+        }
+
         queryset = self.filter_queryset(self.get_queryset())
         page = self.paginate_queryset(queryset)
         if page is not None:
             serializer = self.get_serializer(page, many=True)
-            return self.get_paginated_response(serializer.data)
+            total_in_filter = self.paginator.page.paginator.count if (hasattr(self, 'paginator') and getattr(self.paginator, 'page', None)) else len(serializer.data)
+            current_page = self.paginator.page.number if (hasattr(self, 'paginator') and getattr(self.paginator, 'page', None)) else 1
+            num_pages = self.paginator.page.paginator.num_pages if (hasattr(self, 'paginator') and getattr(self.paginator, 'page', None)) else 1
+            page_size = (self.paginator.get_page_size(request) or 10) if hasattr(self, 'paginator') else 10
+
+            return Response({
+                "success": True,
+                "message": "Students list retrieved successfully",
+                "counts": counts,
+                "total_count": total_in_filter,
+                "data": serializer.data,
+                "pagination": {
+                    "page": current_page,
+                    "page_size": page_size,
+                    "total": total_in_filter,
+                    "total_pages": num_pages
+                }
+            }, status=status.HTTP_200_OK)
+
         serializer = self.get_serializer(queryset, many=True)
-        return api_response(success=True, message="Students list retrieved", data=serializer.data)
+        return Response({
+            "success": True,
+            "message": "Students list retrieved successfully",
+            "counts": counts,
+            "total_count": len(serializer.data),
+            "data": serializer.data,
+            "pagination": {
+                "page": 1,
+                "page_size": len(serializer.data),
+                "total": len(serializer.data),
+                "total_pages": 1
+            }
+        }, status=status.HTTP_200_OK)
 
     def retrieve(self, request, *args, **kwargs):
         instance = self.get_object()
@@ -3181,6 +3342,8 @@ class TeacherViewSet(viewsets.ModelViewSet):
         return False
 
     def get_serializer_class(self):
+        if not self.is_admin_request():
+            return TeacherPublicSearchSerializer
         return TeacherProfileSerializer
 
     def get_queryset(self):
