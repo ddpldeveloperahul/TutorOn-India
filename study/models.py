@@ -299,10 +299,36 @@ class Batch(TimeStampedUUIDModel):
         super().save(*args, **kwargs)
 
 class BatchAnnouncement(TimeStampedUUIDModel):
+    class Priority(models.TextChoices):
+        NORMAL = 'NORMAL', 'Normal'
+        HIGH = 'HIGH', 'High'
+        URGENT = 'URGENT', 'Urgent'
+
+    class Status(models.TextChoices):
+        PUBLISHED = 'PUBLISHED', 'Published'
+        DRAFT = 'DRAFT', 'Draft'
+        FLAGGED = 'FLAGGED', 'Flagged'
+
     batch = models.ForeignKey(Batch, on_delete=models.CASCADE, related_name='announcements')
     teacher = models.ForeignKey(TeacherProfile, on_delete=models.CASCADE, related_name='announcements')
+    code = models.CharField(max_length=50, blank=True, default='', db_index=True)
     title = models.CharField(max_length=255)
     message = models.TextField()
+    priority = models.CharField(
+        max_length=20,
+        choices=Priority.choices,
+        default=Priority.NORMAL,
+        db_index=True
+    )
+    status = models.CharField(
+        max_length=20,
+        choices=Status.choices,
+        default=Status.PUBLISHED,
+        db_index=True
+    )
+    is_flagged = models.BooleanField(default=False, db_index=True)
+    flag_reason = models.TextField(blank=True, default='')
+    admin_notes = models.TextField(blank=True, default='')
     attachment = models.FileField(upload_to='announcements/%Y/%m/', null=True, blank=True)
     published_at = models.DateTimeField(auto_now_add=True)
 
@@ -310,6 +336,12 @@ class BatchAnnouncement(TimeStampedUUIDModel):
         verbose_name = 'Batch Announcement'
         verbose_name_plural = 'Batch Announcements'
         ordering = ['-published_at']
+
+    def save(self, *args, **kwargs):
+        if not self.code:
+            offset = abs(hash(str(self.id or uuid.uuid4()))) % 900
+            self.code = f"ANN-T-{70020 + offset}"
+        super().save(*args, **kwargs)
 
     def __str__(self):
         return f"Announcement: {self.title} ({self.batch.title})"

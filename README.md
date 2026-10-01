@@ -488,7 +488,84 @@ All endpoints in this section require an authenticated user with `role="ADMIN"` 
   ```
 - **Takedown Material**: `PATCH /api/v1/admin/materials/{id}/` with `{"status": "HIDDEN"}`
 
-#### 🔹 18. Admin Reviews Moderation
+#### 🔹 18. Admin Teacher Announcements Moderation (Content > Teacher Announcements)
+- **URL**: `GET /api/v1/admin/teacher-announcements/?tab=all&page=1`
+- **Alternative URL**: `GET /api/v1/content/teacher-announcements/?tab=all&page=1`
+- **Method**: `GET`
+- **Headers**: `Authorization: Bearer <Admin_JWT>`
+- **Query Parameters**:
+  - `tab`: `all` | `published` | `high_priority_urgent` | `flagged` | `drafts`
+  - `status`: `PUBLISHED` | `DRAFT` | `FLAGGED`
+  - `priority`: `NORMAL` | `HIGH` | `URGENT`
+  - `search`: Search by announcement title, message, code (`ANN-T-70021`), teacher name, batch title
+  - `page`: Page number (e.g. `1`)
+  - `page_size`: Number of rows per page (default `10`)
+- **Response Payload (`200 OK`)**:
+  ```json
+  {
+    "success": true,
+    "message": "Teacher announcements retrieved successfully",
+    "counts": {
+      "all": 6,
+      "published": 4,
+      "high_priority_urgent": 3,
+      "flagged_by_admin": 1,
+      "drafts": 1
+    },
+    "data": [
+      {
+        "id": "a1b2c3d4-e5f6-7a8b-9c0d-1e2f3a4b5c6d",
+        "code": "ANN-T-70021",
+        "title": "Rescheduled Doubt-Clearing Session",
+        "message": "Dear students, our Wednesday doubt-clearing session has been rescheduled to Thursday 6:00 PM.",
+        "priority": "HIGH",
+        "priority_badge": "High",
+        "status": "PUBLISHED",
+        "status_display": "Published",
+        "is_flagged": false,
+        "flag_reason": "",
+        "admin_notes": "",
+        "faculty": {
+          "id": "4163070a-d786-4392-87eb-77c5fabf5489",
+          "name": "Dr. Rajesh Sharma",
+          "subject": "Physics",
+          "avatar": null,
+          "initial": "RS"
+        },
+        "faculty_name": "Dr. Rajesh Sharma",
+        "faculty_subject": "Physics",
+        "batch": "c34fbd50-9468-4d7a-a59e-b9d7751fb2b4",
+        "batch_info": {
+          "id": "c34fbd50-9468-4d7a-a59e-b9d7751fb2b4",
+          "title": "Advanced Electromagnetism & Modern Physics",
+          "code": "JEE-PHY-ELM-01",
+          "subject": "Physics",
+          "grade_level": "Class 12"
+        },
+        "batch_title": "Advanced Electromagnetism & Modern Physics",
+        "batch_code": "JEE-PHY-ELM-01",
+        "attachment": null,
+        "published": "22 Sep 2026, 05:30 PM",
+        "published_at": "2026-09-22T17:30:00+05:30",
+        "created_at": "2026-09-22T17:30:00+05:30",
+        "updated_at": "2026-09-22T17:30:00+05:30"
+      }
+    ],
+    "pagination": {
+      "page": 1,
+      "page_size": 10,
+      "total": 6,
+      "total_pages": 1
+    }
+  }
+  ```
+- **Flag Announcement by Admin**: `POST /api/v1/admin/teacher-announcements/{id}/flag/`
+  - **Payload**: `{"reason": "Notice contains private WhatsApp link", "admin_notes": "Violated platform policy"}`
+- **Unflag Announcement**: `POST /api/v1/admin/teacher-announcements/{id}/unflag/`
+- **Publish Draft Announcement**: `POST /api/v1/admin/teacher-announcements/{id}/publish/`
+- **Delete Announcement**: `DELETE /api/v1/admin/teacher-announcements/{id}/`
+
+#### 🔹 19. Admin Reviews Moderation
 - **URL**: `GET /api/v1/admin/reviews/?status=FLAGGED`
 - **Headers**: `Authorization: Bearer <Admin_JWT>`
 - **Response Payload (`200 OK`)**:

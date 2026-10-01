@@ -53,7 +53,7 @@ from .serializers import (
     StudentProfileSerializer, StudentSafePublicSerializer,
     TeacherProfileSerializer, TeacherPublicSearchSerializer,
     TeacherVerificationSubmitSerializer, TeacherVerificationAdminSerializer,
-    BatchPublicSerializer, BatchTeacherSerializer, BatchAnnouncementSerializer, PlatformAnnouncementSerializer,
+    BatchPublicSerializer, BatchTeacherSerializer, BatchAnnouncementSerializer, AdminTeacherAnnouncementSerializer, PlatformAnnouncementSerializer,
     EnrollmentSerializer, EnrollmentActionSerializer,
     ClassContentSerializer, AttendanceSerializer,
     StudyMaterialSerializer, BookmarkSerializer,
@@ -3913,6 +3913,156 @@ class AdminStudyMaterialsListView(viewsets.ModelViewSet):
                 "total": total_count,
                 "total_pages": num_pages
             }
+        }, status=status.HTTP_200_OK)
+
+
+
+class AdminTeacherAnnouncementsViewSet(viewsets.ModelViewSet):
+    """
+    ====================================================================
+    [CONTENT > TEACHER ANNOUNCEMENTS] - Admin Moderation ViewSet:
+    - GET    /api/v1/admin/teacher-announcements/
+    - POST   /api/v1/admin/teacher-announcements/
+    - GET    /api/v1/admin/teacher-announcements/<id>/
+    - PATCH  /api/v1/admin/teacher-announcements/<id>/
+    - DELETE /api/v1/admin/teacher-announcements/<id>/
+    - POST   /api/v1/admin/teacher-announcements/<id>/flag/
+    - POST   /api/v1/admin/teacher-announcements/<id>/unflag/
+    - POST   /api/v1/admin/teacher-announcements/<id>/publish/
+    ====================================================================
+    """
+    queryset = BatchAnnouncement.objects.select_related('batch', 'teacher__user').all().order_by('-published_at', '-created_at')
+    serializer_class = AdminTeacherAnnouncementSerializer
+    permission_classes = [AllowAny]
+    parser_classes = [MultiPartParser, FormParser, JSONParser]
+    filter_backends = [filters.SearchFilter, filters.OrderingFilter]
+    search_fields = [
+        'title', 'message', 'code',
+        'teacher__display_name', 'teacher__user__first_name', 'teacher__user__last_name',
+        'batch__title', 'batch__subject'
+    ]
+    ordering_fields = ['published_at', 'created_at', 'priority', 'status']
+
+    def get_queryset(self):
+        qs = super().get_queryset()
+
+        tab_param = self.request.query_params.get('tab')
+        if tab_param:
+            t = tab_param.strip().lower()
+            if t == 'published':
+                qs = qs.filter(status=BatchAnnouncement.Status.PUBLISHED, is_flagged=False)
+            elif t in ['high_priority_urgent', 'urgent', 'high', 'high priority / urgent']:
+                qs = qs.filter(priority__in=[BatchAnnouncement.Priority.HIGH, BatchAnnouncement.Priority.URGENT])
+            elif t in ['flagged', 'flagged_by_admin', 'flagged by admin']:
+                qs = qs.filter(Q(is_flagged=True) | Q(status=BatchAnnouncement.Status.FLAGGED))
+            elif t in ['draft', 'drafts']:
+                qs = qs.filter(status=BatchAnnouncement.Status.DRAFT)
+
+        status_param = self.request.query_params.get('status')
+        if status_param:
+            s = status_param.strip().upper()
+            if s == 'PUBLISHED':
+                qs = qs.filter(status=BatchAnnouncement.Status.PUBLISHED, is_flagged=False)
+            elif s in ['DRAFT', 'DRAFTS']:
+                qs = qs.filter(status=BatchAnnouncement.Status.DRAFT)
+            elif s in ['FLAGGED', 'FLAGGED_BY_ADMIN', 'FLAGGED BY ADMIN']:
+                qs = qs.filter(Q(is_flagged=True) | Q(status=BatchAnnouncement.Status.FLAGGED))
+
+        priority_param = self.request.query_params.get('priority')
+        if priority_param:
+            p = priority_param.strip().upper()
+            if p in ['HIGH', 'URGENT', 'NORMAL']:
+                qs = qs.filter(priority=p)
+
+        return qs
+
+    def perform_create(self, serializer):
+        batch = serializer.validated_data.get('batch')
+        teacher = serializer.validated_data.get('teacher')
+        if not teacher and batch:
+            teacher = batch.teacher
+        serializer.save(teacher=teacher)
+
+    def list(self, request, *args, **kwargs):
+        queryset = self.filter_queryset(self.get_queryset())
+        page = self.paginate_queryset(queryset)
+        total_count = self.paginator.page.paginator.count if (page is not None and hasattr(self, 'paginator') and getattr(self.paginator, 'page', None)) else queryset.count()
+        current_page = self.paginator.page.number if (page is not None and hasattr(self, 'paginator') and getattr(self.paginator, 'page', None)) else 1
+        num_pages = self.paginator.page.paginator.num_pages if (page is not None and hasattr(self, 'paginator') and getattr(self.paginator, 'page', None)) else 1
+        page_size = (self.paginator.get_page_size(request) or 10) if hasattr(self, 'paginator') else 10
+
+        if page is not None:
+            serializer = self.get_serializer(page, many=True)
+            serialized_data = serializer.data
+        else:
+            serializer = self.get_serializer(queryset, many=True)
+            serialized_data = serializer.data
+
+        counts = BatchAnnouncement.objects.aggregate(
+            all=Count('id'),
+            published=Count('id', filter=Q(status=BatchAnnouncement.Status.PUBLISHED, is_flagged=False)),
+            high_priority_urgent=Count('id', filter=Q(priority__in=[BatchAnnouncement.Priority.HIGH, BatchAnnouncement.Priority.URGENT])),
+            flagged_by_admin=Count('id', filter=Q(is_flagged=True) | Q(status=BatchAnnouncement.Status.FLAGGED)),
+            drafts=Count('id', filter=Q(status=BatchAnnouncement.Status.DRAFT))
+        )
+
+        return Response({
+            "success": True,
+            "message": "Teacher announcements retrieved successfully",
+            "counts": counts,
+            "data": serialized_data,
+            "pagination": {
+                "page": current_page,
+                "page_size": page_size,
+                "total": total_count,
+                "total_pages": num_pages
+            }
+        }, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=['post'])
+    def flag(self, request, pk=None):
+        announcement = self.get_object()
+        reason = request.data.get('reason', 'Notice violated community broadcast guidelines')
+        admin_notes = request.data.get('admin_notes', '')
+        announcement.is_flagged = True
+        announcement.status = BatchAnnouncement.Status.FLAGGED
+        announcement.flag_reason = reason
+        if admin_notes:
+            announcement.admin_notes = admin_notes
+        announcement.save(update_fields=['is_flagged', 'status', 'flag_reason', 'admin_notes', 'updated_at'])
+        serializer = self.get_serializer(announcement)
+        return Response({
+            "success": True,
+            "message": "Announcement flagged by admin successfully",
+            "data": serializer.data
+        }, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=['post'])
+    def unflag(self, request, pk=None):
+        announcement = self.get_object()
+        announcement.is_flagged = False
+        announcement.status = BatchAnnouncement.Status.PUBLISHED
+        announcement.flag_reason = ''
+        announcement.save(update_fields=['is_flagged', 'status', 'flag_reason', 'updated_at'])
+        serializer = self.get_serializer(announcement)
+        return Response({
+            "success": True,
+            "message": "Announcement unflagged and restored to published",
+            "data": serializer.data
+        }, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=['post'])
+    def publish(self, request, pk=None):
+        announcement = self.get_object()
+        announcement.status = BatchAnnouncement.Status.PUBLISHED
+        announcement.is_flagged = False
+        announcement.published_at = timezone.now()
+        announcement.save(update_fields=['status', 'is_flagged', 'published_at', 'updated_at'])
+        serializer = self.get_serializer(announcement)
+        return Response({
+            "success": True,
+            "message": "Announcement published successfully",
+            "data": serializer.data
         }, status=status.HTTP_200_OK)
 
 

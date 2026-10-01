@@ -58,7 +58,7 @@ from .views import (
     AdminTeacherVerificationDetailView, AdminTeacherVerificationApproveView,
     AdminTeacherVerificationRejectView, AdminConnectionsListView,
     AdminBatchesListView, AdminEnrollmentsListView, AdminAnnouncementsListView, AdminPromotionalBannersViewSet,
-    AdminStudyMaterialsListView, AdminReviewsListView,
+    AdminStudyMaterialsListView, AdminTeacherAnnouncementsViewSet, AdminReviewsListView,
     AdminReportsListView, AdminReportResolveView, AdminPaymentsListView,
     AdminAuditLogsListView, AdminConnectionApproveView, AdminConnectionRejectView,
     AdminSendClassRemindersView
@@ -78,6 +78,8 @@ router.register(r'banners', AdminPromotionalBannersViewSet, basename='public-ban
 router.register(r'admin/materials', AdminStudyMaterialsListView, basename='admin-materials')
 router.register(r'admin/study-materials', AdminStudyMaterialsListView, basename='admin-study-materials')
 router.register(r'content/study-materials', AdminStudyMaterialsListView, basename='content-study-materials')
+router.register(r'admin/teacher-announcements', AdminTeacherAnnouncementsViewSet, basename='admin-teacher-announcements')
+router.register(r'content/teacher-announcements', AdminTeacherAnnouncementsViewSet, basename='content-teacher-announcements')
 router.register(r'admin/batches', AdminBatchesListView, basename='admin-batches')
 router.register(r'admin/reviews', AdminReviewsListView, basename='admin-reviews')
 router.register(r'admin/reports', AdminReportsListView, basename='admin-reports')

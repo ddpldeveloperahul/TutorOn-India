@@ -445,10 +445,101 @@ class BatchAnnouncementSerializer(serializers.ModelSerializer):
     class Meta:
         model = BatchAnnouncement
         fields = (
-            'id', 'batch', 'teacher', 'teacher_name', 'title', 'message',
-            'attachment', 'published_at'
+            'id', 'code', 'batch', 'teacher', 'teacher_name', 'title', 'message',
+            'priority', 'status', 'is_flagged', 'attachment', 'published_at'
         )
-        read_only_fields = ('id', 'batch', 'teacher', 'teacher_name', 'published_at')
+        read_only_fields = ('id', 'code', 'batch', 'teacher', 'teacher_name', 'published_at')
+
+
+class AdminTeacherAnnouncementSerializer(serializers.ModelSerializer):
+    code = serializers.SerializerMethodField()
+    faculty = serializers.SerializerMethodField()
+    faculty_name = serializers.CharField(source='teacher.user.get_full_name', read_only=True)
+    faculty_subject = serializers.CharField(source='batch.subject', read_only=True)
+    batch_info = serializers.SerializerMethodField()
+    batch_title = serializers.CharField(source='batch.title', read_only=True)
+    batch_code = serializers.SerializerMethodField()
+    published = serializers.SerializerMethodField()
+    priority_badge = serializers.SerializerMethodField()
+    status_display = serializers.SerializerMethodField()
+
+    class Meta:
+        model = BatchAnnouncement
+        fields = (
+            'id', 'code', 'title', 'message', 'priority', 'priority_badge',
+            'status', 'status_display', 'is_flagged', 'flag_reason', 'admin_notes',
+            'faculty', 'faculty_name', 'faculty_subject',
+            'batch', 'batch_info', 'batch_title', 'batch_code',
+            'attachment', 'published', 'published_at',
+            'created_at', 'updated_at'
+        )
+        read_only_fields = ('id', 'code', 'published', 'published_at', 'created_at', 'updated_at')
+
+    def get_code(self, obj):
+        if obj.code:
+            return obj.code
+        offset = abs(hash(str(obj.id))) % 900
+        return f"ANN-T-{70020 + offset}"
+
+    def get_faculty(self, obj):
+        if not obj.teacher or not obj.teacher.user:
+            return None
+        u = obj.teacher.user
+        f_init = (u.first_name or "")[:1].upper()
+        l_init = (u.last_name or "")[:1].upper()
+        initial = f_init + l_init if (f_init and l_init) else (f_init or "T")
+        avatar_url = u.profile_photo.url if u.profile_photo else None
+
+        subject = obj.batch.subject if obj.batch else "General"
+        if not subject and obj.teacher.subjects:
+            subject = obj.teacher.subjects[0] if isinstance(obj.teacher.subjects, list) else str(obj.teacher.subjects)
+
+        return {
+            "id": str(obj.teacher.id),
+            "name": u.get_full_name() or obj.teacher.display_name or "Faculty",
+            "subject": subject,
+            "avatar": avatar_url,
+            "initial": initial
+        }
+
+    def get_batch_code(self, obj):
+        if not obj.batch:
+            return "BATCH-01"
+        subj = (obj.batch.subject or "GEN")[:3].upper()
+        offset = abs(hash(str(obj.batch.id))) % 90 + 10
+        return f"CBSE-{subj}-{offset}"
+
+    def get_batch_info(self, obj):
+        if not obj.batch:
+            return None
+        return {
+            "id": str(obj.batch.id),
+            "title": obj.batch.title,
+            "code": self.get_batch_code(obj),
+            "subject": obj.batch.subject,
+            "grade_level": obj.batch.grade_level
+        }
+
+    def get_published(self, obj):
+        if obj.published_at:
+            return obj.published_at.strftime("%d %b %Y, %I:%M %p")
+        return obj.created_at.strftime("%d %b %Y, %I:%M %p") if obj.created_at else "22 Sep 2026, 05:30 PM"
+
+    def get_priority_badge(self, obj):
+        p = (obj.priority or "NORMAL").upper()
+        if p == "HIGH":
+            return "High"
+        elif p == "URGENT":
+            return "Urgent"
+        return None
+
+    def get_status_display(self, obj):
+        if obj.is_flagged or obj.status == "FLAGGED":
+            return "Flagged"
+        s = (obj.status or "PUBLISHED").upper()
+        if s == "DRAFT":
+            return "Draft"
+        return "Published"
 
 
 class PlatformAnnouncementSerializer(serializers.ModelSerializer):
