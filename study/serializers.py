@@ -543,6 +543,7 @@ class AdminTeacherAnnouncementSerializer(serializers.ModelSerializer):
 
 
 class PlatformAnnouncementSerializer(serializers.ModelSerializer):
+    code = serializers.SerializerMethodField()
     author_name = serializers.SerializerMethodField()
     type = serializers.CharField(source='announcement_type', required=False)
     type_display = serializers.SerializerMethodField()
@@ -567,6 +568,42 @@ class PlatformAnnouncementSerializer(serializers.ModelSerializer):
             'created_at', 'updated_at'
         )
         read_only_fields = ('id', 'created_at', 'updated_at')
+
+    def to_internal_value(self, data):
+        if hasattr(data, '_mutable') and not data._mutable:
+            data = data.copy()
+        elif isinstance(data, dict):
+            data = dict(data)
+
+        # Normalize audience (student/students -> STUDENTS, teacher/teachers -> TEACHERS, all -> ALL_USERS)
+        if 'audience' in data and isinstance(data['audience'], str):
+            aud = data['audience'].strip().upper()
+            if aud in ['STUDENT', 'STUDENTS']:
+                data['audience'] = 'STUDENTS'
+            elif aud in ['TEACHER', 'TEACHERS']:
+                data['audience'] = 'TEACHERS'
+            elif aud in ['ALL', 'ALL_USERS', 'ALL USERS', 'EVERYONE']:
+                data['audience'] = 'ALL_USERS'
+
+        # Normalize announcement_type
+        if 'announcement_type' in data and isinstance(data['announcement_type'], str):
+            at = data['announcement_type'].strip().upper()
+            if at in ['GENERAL', 'IMPORTANT', 'PROMOTIONAL']:
+                data['announcement_type'] = at
+
+        # Normalize status
+        if 'status' in data and isinstance(data['status'], str):
+            st = data['status'].strip().upper()
+            if st in ['PUBLISHED', 'SCHEDULED', 'DRAFT', 'EXPIRED']:
+                data['status'] = st
+
+        return super().to_internal_value(data)
+
+    def get_code(self, obj):
+        if obj.code:
+            return obj.code
+        offset = abs(hash(str(obj.id))) % 900
+        return f"ANN-2026-{100 + offset}"
 
     def get_author_name(self, obj):
         if obj.author:
