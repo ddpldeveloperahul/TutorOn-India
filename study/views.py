@@ -3632,15 +3632,50 @@ class AdminTeacherVerificationDetailView(generics.RetrieveAPIView):
     permission_classes = [IsAdmin]
     serializer_class = TeacherVerificationAdminSerializer
     lookup_field = 'id'
-    queryset = TeacherVerification.objects.select_related('teacher__user', 'reviewed_by').all()
+
+    def get_object(self):
+        lookup = self.kwargs.get('id')
+        verification = TeacherVerification.objects.select_related('teacher__user', 'reviewed_by').filter(
+            Q(id=lookup) | Q(teacher__id=lookup) | Q(teacher__user__id=lookup)
+        ).first()
+        if not verification:
+            teacher_profile = TeacherProfile.objects.select_related('user').filter(
+                Q(id=lookup) | Q(user__id=lookup)
+            ).first()
+            if teacher_profile:
+                verification, _ = TeacherVerification.objects.get_or_create(
+                    teacher=teacher_profile,
+                    defaults={
+                        'document_type': 'ID Card / Govt ID',
+                        'document_file': '',
+                        'status': TeacherVerification.Status.APPROVED if teacher_profile.verification_status == TeacherProfile.VerificationStatus.VERIFIED else TeacherVerification.Status.PENDING,
+                    }
+                )
+        if not verification:
+            raise NotFound("Teacher verification not found.")
+        return verification
 
 class AdminTeacherVerificationApproveView(APIView):
     permission_classes = [IsAdmin]
 
     def post(self, request, id):
-        try:
-            verification = TeacherVerification.objects.select_related('teacher__user').get(id=id)
-        except TeacherVerification.DoesNotExist:
+        verification = TeacherVerification.objects.select_related('teacher__user').filter(
+            Q(id=id) | Q(teacher__id=id) | Q(teacher__user__id=id)
+        ).first()
+        if not verification:
+            teacher_profile = TeacherProfile.objects.select_related('user').filter(
+                Q(id=id) | Q(user__id=id)
+            ).first()
+            if teacher_profile:
+                verification, _ = TeacherVerification.objects.get_or_create(
+                    teacher=teacher_profile,
+                    defaults={
+                        'document_type': 'ID Card / Govt ID',
+                        'document_file': '',
+                        'status': TeacherVerification.Status.PENDING,
+                    }
+                )
+        if not verification:
             raise NotFound("Teacher verification not found.")
         admin_note = request.data.get('admin_note', '')
         approved = TeacherVerificationService.approve_verification(verification=verification, admin_user=request.user, admin_note=admin_note)
@@ -3651,9 +3686,23 @@ class AdminTeacherVerificationRejectView(APIView):
     permission_classes = [IsAdmin]
 
     def post(self, request, id):
-        try:
-            verification = TeacherVerification.objects.select_related('teacher__user').get(id=id)
-        except TeacherVerification.DoesNotExist:
+        verification = TeacherVerification.objects.select_related('teacher__user').filter(
+            Q(id=id) | Q(teacher__id=id) | Q(teacher__user__id=id)
+        ).first()
+        if not verification:
+            teacher_profile = TeacherProfile.objects.select_related('user').filter(
+                Q(id=id) | Q(user__id=id)
+            ).first()
+            if teacher_profile:
+                verification, _ = TeacherVerification.objects.get_or_create(
+                    teacher=teacher_profile,
+                    defaults={
+                        'document_type': 'ID Card / Govt ID',
+                        'document_file': '',
+                        'status': TeacherVerification.Status.PENDING,
+                    }
+                )
+        if not verification:
             raise NotFound("Teacher verification not found.")
         rejection_reason = request.data.get('rejection_reason', 'Documents did not meet criteria')
         admin_note = request.data.get('admin_note', '')
