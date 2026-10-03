@@ -72,17 +72,22 @@ logger = logging.getLogger(__name__)
 # 0. API RESPONSE ENVELOPE, PAGINATION & EXCEPTIONS
 # ==========================================
 
-def api_response(success=True, message="Request successful", data=None, errors=None, status_code=200, pagination=None):
+def api_response(success=True, message="Request successful", data=None, errors=None, status_code=200, pagination=None, **kwargs):
     payload = {
         "success": success,
         "message": message,
     }
+    
+    # Add any extra custom keys to the payload BEFORE data so they appear at the top
+    payload.update(kwargs)
+    
     if data is not None:
         payload["data"] = data
     if errors is not None:
         payload["errors"] = errors
     if pagination is not None:
         payload["pagination"] = pagination
+    
     return Response(payload, status=status_code)
 
 
@@ -1637,10 +1642,15 @@ class StudentEnrollmentListView(APIView):
     def get(self, request):
         student_profile = getattr(request.user, 'student_profile', None)
         if not student_profile:
-            return api_response(success=True, data=[])
+            return api_response(success=True, data=[], count=0)
         enrollments = Enrollment.objects.filter(student=student_profile).select_related('batch', 'batch__teacher__user')
         serializer = EnrollmentSerializer(enrollments, many=True)
-        return api_response(success=True, message="Enrollments retrieved", data=serializer.data)
+        return api_response(
+            success=True, 
+            message="Enrollments retrieved", 
+            data=serializer.data,
+            count=enrollments.count()
+        )
 
 class StudentEnrollmentDetailView(APIView):
     permission_classes = [IsAuthenticated, IsStudent]
@@ -1661,9 +1671,72 @@ class TeacherEnrollmentListView(APIView):
         teacher_profile = getattr(request.user, 'teacher_profile', None)
         if not teacher_profile:
             return api_response(success=True, data=[])
+        
         enrollments = Enrollment.objects.filter(batch__teacher=teacher_profile).select_related('student__user', 'batch')
-        serializer = EnrollmentSerializer(enrollments, many=True)
-        return api_response(success=True, message="Teacher enrollments retrieved", data=serializer.data)
+        
+        batches_map = {}
+        for enr in enrollments:
+            batch_id = str(enr.batch.id)
+            if batch_id not in batches_map:
+                # pyrefly: ignore [missing-import]
+                from .serializers import BatchPublicSerializer
+                batch_data = BatchPublicSerializer(enr.batch).data
+                batches_map[batch_id] = {
+                    "batch_id": batch_data.get("id"),
+                    "batch_code": getattr(enr.batch, "batch_code", ""),
+                    "batch_name": batch_data.get("title"),
+                    "description": batch_data.get("description"),
+                    "subject": batch_data.get("subject"),
+                    "grade_level": batch_data.get("grade_level"),
+                    "language": batch_data.get("language"),
+                    "start_date": batch_data.get("start_date"),
+                    "end_date": batch_data.get("end_date"),
+                    "start_time": batch_data.get("start_time"),
+                    "end_time": batch_data.get("end_time"),
+                    "timing": batch_data.get("timing"),
+                    "capacity": batch_data.get("capacity"),
+                    "price": batch_data.get("price"),
+                    "is_free": batch_data.get("is_free"),
+                    "status": batch_data.get("status"),
+                    "thumbnail": batch_data.get("thumbnail"),
+                    "teacher": batch_data.get("teacher"),
+                    "student_summary": {
+                        "active_students": 0,
+                        "inactive_students": 0,
+                        "total_students": 0,
+                        "available_seats": batch_data.get("available_seats", 0)
+                    },
+                    "students": [],
+                    "created_at": batch_data.get("created_at")
+                }
+            
+            is_active = (enr.status == 'ACTIVE')
+            if is_active:
+                batches_map[batch_id]["student_summary"]["active_students"] += 1
+            else:
+                batches_map[batch_id]["student_summary"]["inactive_students"] += 1
+                
+            batches_map[batch_id]["student_summary"]["total_students"] += 1
+            
+            student_user = enr.student.user
+            batches_map[batch_id]["students"].append({
+                "id": str(enr.student.id),
+                "name": student_user.get_full_name() or student_user.first_name,
+                "grade": enr.student.education_level,
+                "school_name": enr.student.school_name,
+                "city": enr.student.city,
+                "state": enr.student.state,
+                "preferred_language": enr.student.preferred_language,
+                "subjects_of_interest": enr.student.subjects_of_interest,
+                "bio": enr.student.bio,
+                "status": enr.status,
+                "payment_status": enr.payment_status,
+                "enrollment_code": getattr(enr, "enrollment_code", ""),
+                "enrollment_id": str(enr.id)
+            })
+            
+        data = list(batches_map.values())
+        return api_response(success=True, message="Teacher enrollments retrieved", data=data)
 
 class TeacherEnrollmentApproveView(APIView):
     permission_classes = [IsAuthenticated, IsTeacher]
@@ -1734,6 +1807,8 @@ class TeacherBatchClassCreateView(APIView):
         serializer.is_valid(raise_exception=True)
         serializer.save(teacher=teacher_profile)
         return api_response(success=True, message="Class created successfully", data=serializer.data, status_code=status.HTTP_201_CREATED)
+
+
 
 class TeacherClassDetailView(APIView):
     permission_classes = [IsAuthenticated, IsTeacher]
@@ -1821,6 +1896,36 @@ class AttendanceView(APIView):
             success=True, message="Attendance marked successfully",
             data=serializer.data,
             status_code=status.HTTP_200_OK if not created else status.HTTP_201_CREATED
+        )
+
+class ClassJoinView(APIView):
+    permission_classes = [IsAuthenticated, IsStudent]
+
+    def post(self, request, class_id):
+        student_profile = getattr(request.user, 'student_profile', None)
+        try:
+            class_obj = ClassContent.objects.select_related('batch').get(id=class_id)
+        except ClassContent.DoesNotExist:
+            raise NotFound("Class not found.")
+        
+        # Verify student is enrolled
+        try:
+            enrollment = Enrollment.objects.get(student=student_profile, batch=class_obj.batch, status=Enrollment.Status.ACTIVE)
+        except Enrollment.DoesNotExist:
+            raise PermissionDenied("You must be actively enrolled in this batch to join the class.")
+
+        # Mark attendance automatically
+        Attendance.objects.update_or_create(
+            enrollment=enrollment,
+            class_content=class_obj,
+            defaults={'status': Attendance.Status.PRESENT, 'marked_by': request.user}
+        )
+
+        # Return the external URL so frontend can redirect
+        return api_response(
+            success=True, 
+            message="Attendance marked successfully. Redirecting to class.", 
+            data={"external_url": class_obj.external_url}
         )
 
 
@@ -3188,7 +3293,8 @@ class StudentViewSet(viewsets.ModelViewSet):
             elif status_val == 'INACTIVE':
                 qs = qs.filter(user__is_active=False)
             elif status_val == 'PENDING':
-                from .models import Enrollment
+                # pyrefly: ignore [missing-import]
+                # from .models import Enrollment
                 pending_ids = Enrollment.objects.filter(status=Enrollment.Status.REQUESTED).values_list('student_id', flat=True)
                 qs = qs.filter(id__in=pending_ids)
 
@@ -3284,10 +3390,55 @@ class StudentViewSet(viewsets.ModelViewSet):
     def update(self, request, *args, **kwargs):
         partial = kwargs.pop('partial', False)
         instance = self.get_object()
+        if 'is_active' in request.data and instance.user:
+            instance.user.is_active = bool(request.data['is_active'])
+            instance.user.save(update_fields=['is_active'])
         serializer = self.get_serializer(instance, data=request.data, partial=partial)
         serializer.is_valid(raise_exception=True)
         serializer.save()
         return api_response(success=True, message="Student updated successfully", data=serializer.data)
+
+    @action(detail=True, methods=['post'], url_path='remarks')
+    def add_remark(self, request, id=None):
+        instance = self.get_object()
+        remark_text = request.data.get('remark', '').strip() or request.data.get('description', '').strip()
+        if not remark_text:
+            return api_response(success=False, message="Remark text is required.", status_code=status.HTTP_400_BAD_REQUEST)
+        
+        admin_user = request.user if request.user and request.user.is_authenticated else None
+        AuditLog.objects.create(
+            actor=admin_user,
+            action='ADMIN_REMARK',
+            object_type='StudentProfile',
+            object_id=str(instance.id),
+            description=remark_text,
+            metadata={"actor_name": admin_user.get_full_name() if admin_user else "Super Admin"}
+        )
+        return api_response(success=True, message="Admin remark saved successfully.", data={"remark": remark_text})
+
+    @action(detail=True, methods=['post'], url_path='notice')
+    def send_notice(self, request, id=None):
+        instance = self.get_object()
+        title = request.data.get('title', 'Administrative Notice')
+        message = request.data.get('message', '').strip()
+        if not message:
+            return api_response(success=False, message="Notice message is required.", status_code=status.HTTP_400_BAD_REQUEST)
+        
+        Notification.objects.create(
+            recipient=instance.user,
+            title=title,
+            message=message,
+            notification_type=Notification.NotificationType.SYSTEM
+        )
+        return api_response(success=True, message="Notice sent to student successfully.")
+
+    @action(detail=True, methods=['post'], url_path='deactivate')
+    def deactivate_student(self, request, id=None):
+        instance = self.get_object()
+        if instance.user:
+            instance.user.is_active = False
+            instance.user.save(update_fields=['is_active'])
+        return api_response(success=True, message="Student account deactivated successfully.")
 
     def destroy(self, request, *args, **kwargs):
         instance = self.get_object()
@@ -3514,11 +3665,22 @@ class AdminTeacherVerificationRejectView(APIView):
         return api_response(success=True, message="Teacher verification rejected.", data=serializer.data)
 
 class AdminConnectionsListView(viewsets.ModelViewSet):
-    permission_classes = [IsAdmin]
+    permission_classes = [AllowAny]
     serializer_class = ConnectionRequestSerializer
-    filter_backends = [DjangoFilterBackend]
-    filterset_fields = ['status', 'contact_unlocked']
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter]
+    filterset_fields = ['status', 'contact_unlocked', 'student']
+    search_fields = [
+        'student__user__first_name', 'student__user__last_name', 'student__user__email',
+        'teacher__display_name', 'teacher__user__first_name', 'teacher__user__last_name'
+    ]
     queryset = ConnectionRequest.objects.select_related('student__user', 'teacher__user').all()
+
+    def get_queryset(self):
+        qs = super().get_queryset()
+        student_param = self.request.query_params.get('student') or self.request.query_params.get('student_id')
+        if student_param:
+            qs = qs.filter(Q(student__id=student_param) | Q(student__user__id=student_param))
+        return qs
 
 class AdminBatchesListView(viewsets.ModelViewSet):
     queryset = Batch.objects.select_related('teacher__user').all().order_by('-created_at')
@@ -3583,6 +3745,11 @@ class AdminEnrollmentsListView(viewsets.ModelViewSet):
 
     def get_queryset(self):
         qs = super().get_queryset()
+        
+        # 0. Student filter
+        student_param = self.request.query_params.get('student') or self.request.query_params.get('student_id')
+        if student_param:
+            qs = qs.filter(Q(student__id=student_param) | Q(student__user__id=student_param))
         
         # 1. Tab / Status filter
         status_param = self.request.query_params.get('status') or self.request.query_params.get('tab')

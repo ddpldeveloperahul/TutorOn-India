@@ -26,7 +26,7 @@ from .views import (
 
     # Classes & Attendance
     BatchClassListView, TeacherBatchClassCreateView, TeacherClassDetailView,
-    ClassDetailView, AttendanceView,
+    ClassDetailView, AttendanceView, ClassJoinView,
 
     # Materials & Bookmarks
     BatchMaterialListView, TeacherBatchMaterialCreateView, TeacherMaterialDetailView,
@@ -135,6 +135,7 @@ urlpatterns = [
     path('teacher/classes/<uuid:id>/', TeacherClassDetailView.as_view(), name='teacher-class-detail'),
     path('classes/<uuid:id>/', ClassDetailView.as_view(), name='class-detail'),
     path('classes/<uuid:class_id>/attendance/', AttendanceView.as_view(), name='class-attendance'),
+    path('classes/<uuid:class_id>/join/', ClassJoinView.as_view(), name='class-join'),
 
     # Materials
     path('batches/<uuid:batch_id>/materials/', BatchMaterialListView.as_view(), name='batch-materials-list'),
