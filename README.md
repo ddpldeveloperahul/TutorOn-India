@@ -224,8 +224,20 @@ All endpoints in this section require an authenticated user with `role="ADMIN"` 
   }
   ```
 - **Create Student**: `POST /api/v1/admin/students/`
+- **Retrieve Student Detail**: `GET /api/v1/admin/students/{id}/`
 - **Update Student**: `PATCH /api/v1/admin/students/{id}/`
 - **Delete Student**: `DELETE /api/v1/admin/students/{id}/`
+- **Deactivate Student**: `POST /api/v1/admin/students/{id}/deactivate/`
+  * Sets `is_active = False` on the student user and logs an audit trail. Blocks login, live class access, materials, and enrollments.
+- **Activate Student**: `POST /api/v1/admin/students/{id}/activate/`
+  * Restores student account to `Active` (`is_active = True`) with full access.
+- **Toggle / Set Status**: `POST /api/v1/admin/students/{id}/status/` or `POST /api/v1/admin/students/{id}/toggle-status/`
+  * Accepts `{"is_active": true/false}` or `{"status": "ACTIVE"/"INACTIVE"}`.
+- **Send Administrative Notice**: `POST /api/v1/admin/students/{id}/notice/`
+  * Payload: `{"title": "Fee Submission Due", "message": "Please clear your monthly batch fee before Friday."}`
+- **Add Admin Remark**: `POST /api/v1/admin/students/{id}/remarks/`
+  * Payload: `{"remark": "Verified parent KYC contact details via phone audit."}`
+> 🔒 **Role Safety Restriction:** Only student accounts can be activated or deactivated via these endpoints. Teacher accounts cannot be deactivated (returns `400 Bad Request`).
 
 ---
 
@@ -722,6 +734,56 @@ All endpoints in this section require an authenticated user with `role="ADMIN"` 
     }
   }
   ```
+
+#### 🔹 24. Admin Notifications & Broadcast System
+- **View Admin Notifications (Personal Inbox)**: `GET /api/v1/admin/notifications/`
+- **View All Platform Notifications (Global Audit View)**: `GET /api/v1/admin/notifications/?all=true`
+- **Mark Notification as Read**: `POST /api/v1/admin/notifications/{id}/read/`
+  *(Note: Super Admin privileges allow marking any notification as read across the platform).*
+- **Mark All Notifications as Read**: `POST /api/v1/admin/notifications/read-all/`
+- **Send Broadcast Notification**: `POST /api/v1/admin/notifications/send/` (or `/api/v1/admin/notifications/broadcast/`)
+  * **Headers**: `Authorization: Bearer <Admin_JWT>`, `Content-Type: application/json`
+
+  * **Scenario 1: Send to Teachers Only (`audience: "TEACHERS"`)**:
+    ```json
+    {
+      "title": "Monthly Faculty Review Meeting",
+      "message": "All teachers are requested to join the monthly review meeting at 6:00 PM today.",
+      "audience": "TEACHERS"
+    }
+    ```
+
+  * **Scenario 2: Send to Students Only (`audience: "STUDENTS"`)**:
+    ```json
+    {
+      "title": "Mid-Term Examination Datesheet",
+      "message": "Dear Students, the mid-term exam schedule has been published. Please check your batch portal.",
+      "audience": "STUDENTS"
+    }
+    ```
+
+  * **Scenario 3: Send to Both Teachers & Students (`audience: "ALL_USERS"`)**:
+    ```json
+    {
+      "title": "Platform Scheduled Maintenance Notice",
+      "message": "The platform will undergo maintenance tonight between 11:00 PM and 1:00 AM.",
+      "audience": "ALL_USERS"
+    }
+    ```
+
+  * **Response Payload (`201 Created`)**:
+    ```json
+    {
+      "success": true,
+      "message": "Notification sent successfully to 16 Teachers & Students.",
+      "data": {
+        "title": "Platform Scheduled Maintenance Notice",
+        "message": "The platform will undergo maintenance tonight between 11:00 PM and 1:00 AM.",
+        "audience": "ALL_USERS",
+        "recipients_count": 16
+      }
+    }
+    ```
 
 ---
 
@@ -1238,7 +1300,19 @@ This section contains all client endpoints consumed by the Flutter/React Native/
     "notes": "Enrolling for JEE Advanced physics."
   }
   ```
-- **Batch Announcements**: `GET|POST /api/v1/batches/{id}/announcements/`
+- **Batch Announcements**:
+  * **List Announcements**: `GET /api/v1/batches/{id}/announcements/`
+  * **Publish Batch Announcement (Teacher to All Batch Students)**: `POST /api/v1/teacher/batches/{id}/announcements/` (or `POST /api/v1/batches/{id}/announcements/`)
+    - **Headers**: `Authorization: Bearer <Teacher_JWT>`, `Content-Type: application/json`
+    - **Request Payload**:
+      ```json
+      {
+        "title": "Extra Physics Class Tomorrow",
+        "message": "Tomorrow at 10:00 AM we will solve previous year question papers. Attendance is mandatory for all students.",
+        "priority": "HIGH"
+      }
+      ```
+    - *(Note: Publishing an announcement automatically dispatches a `TEACHER_ANNOUNCEMENT` in-app notification to all active enrolled students in this batch).*
 
 #### 🔹 20. Public Promotional Banners (App Carousel)
 - **URL**: `GET /api/v1/banners/`
@@ -1351,10 +1425,59 @@ This section contains all client endpoints consumed by the Flutter/React Native/
   ```
 - **Mark Message Read**: `POST /api/v1/messages/{id}/read/`
 
-#### 🔹 27. In-App Notifications
+#### 🔹 27. In-App Notifications (`/api/v1/notifications/`)
+Role-aware notification system for Students and Teachers. The backend automatically filters notifications for the logged-in user based on the Bearer JWT token.
+
 - **List Notifications**: `GET /api/v1/notifications/`
-- **Mark Read**: `POST /api/v1/notifications/{id}/read/`
-- **Mark All Read**: `POST /api/v1/notifications/read-all/`
+  * **Headers**: `Authorization: Bearer <Student_or_Teacher_JWT>`
+  * **Response Payload (`200 OK`)**:
+    ```json
+    {
+      "success": true,
+      "message": "Notifications retrieved",
+      "data": {
+        "unread_count": 2,
+        "notifications": [
+          {
+            "id": "e6f8b91c-1342-4f76-8805-4c07a0c7e2b1",
+            "title": "New Batch Announcement: Target JEE 2027",
+            "message": "Tomorrow at 10:00 AM we will solve previous year question papers.",
+            "notification_type": "TEACHER_ANNOUNCEMENT",
+            "related_object_id": "announcement-uuid",
+            "is_read": false,
+            "created_at": "2026-10-05T15:45:00Z"
+          },
+          {
+            "id": "11a2b3c4-5d6e-7f8a-9b0c-1d2e3f4a5b6c",
+            "title": "Upcoming Class Reminder",
+            "message": "Physics Class starts in 15 minutes.",
+            "notification_type": "CLASS_REMINDER",
+            "related_object_id": "class-uuid",
+            "is_read": false,
+            "created_at": "2026-10-05T15:00:00Z"
+          }
+        ]
+      }
+    }
+    ```
+- **Mark Single Notification as Read**: `POST /api/v1/notifications/{id}/read/`
+- **Mark All Notifications as Read**: `POST /api/v1/notifications/read-all/`
+
+##### 🔔 Notification Types & Triggers Overview
+| Notification Type | Trigger Event (Kab trigger hoti hai?) | Target Recipient |
+| :--- | :--- | :--- |
+| `CLASS_REMINDER` | Live class start hone se pehle automated/cron reminder | Enrolled Students & Batch Teacher |
+| `TEACHER_ANNOUNCEMENT` | Teacher batch ke andar naya announcement/notice post karta hai | Us batch ke sabhi enrolled Students |
+| `ENROLLMENT_REQUEST` | Student batch admission ke liye request bhejta hai | Batch Teacher |
+| `ENROLLMENT_APPROVED` | Teacher ya Admin student ki admission request accept karta hai | Student |
+| `MATERIAL_UPLOADED` | Teacher batch ke andar naye Study Material/Notes upload karta hai | Us batch ke sabhi Students |
+| `CONNECTION_REQUEST` | Student teacher se 1-on-1 direct phone/contact connect request karta hai | Teacher |
+| `CONNECTION_APPROVED` | Teacher ya Admin contact unlock request accept karta hai | Student |
+| `NEW_MESSAGE` | Chat/Inbox me naya direct message receive hone par | Receiver (Student or Teacher) |
+| `PAYMENT_SUCCESS` | Batch fees payment successfully verify hone par | Student |
+| `PAYMENT_REMINDER` | Fees pending hone par payment reminder | Student |
+| `PAYMENT_FAILED` | Transaction fail hone par payment retry alert | Student |
+| `SYSTEM` | Admin verification approval, platform notice, ya account updates | Student / Teacher |
 
 #### 🔹 28. Reviews, Ratings & Incident Reports
 - **Submit Batch Review**: `POST /api/v1/batches/{batch_id}/reviews/`
