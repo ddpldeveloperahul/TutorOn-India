@@ -1,3 +1,4 @@
+import uuid
 import secrets
 import logging
 from datetime import timedelta
@@ -625,6 +626,36 @@ class NotificationService:
             except Exception:
                 pass
         return notification
+
+    @staticmethod
+    def send_broadcast_notification(title, message, audience='ALL_USERS', author=None, notification_type='SYSTEM'):
+        """
+        Send notification based on audience:
+        1. 'TEACHERS' or 'TEACHER' -> all active teachers
+        2. 'STUDENTS' or 'STUDENT' -> all active students
+        3. 'ALL_USERS' or 'ALL' or 'BOTH' -> all active teachers and students
+        """
+        aud = str(audience).upper().strip().replace(' ', '_')
+        users_qs = User.objects.filter(is_active=True)
+        if aud in ['TEACHERS', 'TEACHER']:
+            users_qs = users_qs.filter(role=User.Role.TEACHER)
+        elif aud in ['STUDENTS', 'STUDENT']:
+            users_qs = users_qs.filter(role=User.Role.STUDENT)
+        else:
+            users_qs = users_qs.filter(role__in=[User.Role.STUDENT, User.Role.TEACHER])
+
+        notifications_to_create = [
+            Notification(
+                recipient=u,
+                title=title,
+                message=message,
+                notification_type=notification_type,
+                is_read=False
+            )
+            for u in users_qs
+        ]
+        Notification.objects.bulk_create(notifications_to_create)
+        return len(notifications_to_create)
 
     @staticmethod
     def send_upcoming_class_reminders(window_minutes=60):
@@ -2377,9 +2408,14 @@ class NotificationListView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        notifications = Notification.objects.filter(recipient=request.user)
+        is_admin = (request.user.is_staff or getattr(request.user, 'role', '') == User.Role.ADMIN)
+        if is_admin and request.query_params.get('all') == 'true':
+            notifications = Notification.objects.all().order_by('-created_at')
+        else:
+            notifications = Notification.objects.filter(recipient=request.user).order_by('-created_at')
+
         unread_count = notifications.filter(is_read=False).count()
-        serializer = NotificationSerializer(notifications[:50], many=True)
+        serializer = NotificationSerializer(notifications[:100], many=True)
         return api_response(
             success=True,
             message="Notifications retrieved",
@@ -2390,8 +2426,12 @@ class NotificationMarkReadView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request, id):
+        is_admin = (request.user.is_staff or getattr(request.user, 'role', '') == User.Role.ADMIN)
         try:
-            notification = Notification.objects.get(id=id, recipient=request.user)
+            if is_admin:
+                notification = Notification.objects.get(id=id)
+            else:
+                notification = Notification.objects.get(id=id, recipient=request.user)
         except Notification.DoesNotExist:
             raise NotFound("Notification not found.")
         notification.is_read = True
@@ -2402,8 +2442,52 @@ class NotificationMarkAllReadView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
-        updated_count = Notification.objects.filter(recipient=request.user, is_read=False).update(is_read=True)
+        is_admin = (request.user.is_staff or getattr(request.user, 'role', '') == User.Role.ADMIN)
+        if is_admin and (request.query_params.get('all') == 'true' or 'admin' in request.path):
+            updated_count = Notification.objects.filter(is_read=False).update(is_read=True)
+        else:
+            updated_count = Notification.objects.filter(recipient=request.user, is_read=False).update(is_read=True)
         return api_response(success=True, message=f"{updated_count} notifications marked as read.")
+
+class AdminSendNotificationView(APIView):
+    permission_classes = [IsAdmin]
+
+    def post(self, request):
+        title = request.data.get('title', '').strip()
+        message = request.data.get('message', '').strip()
+        audience = request.data.get('audience') or request.data.get('target') or request.data.get('send_to', 'ALL_USERS')
+
+        if not title:
+            return api_response(success=False, message="Title is required.", status_code=status.HTTP_400_BAD_REQUEST)
+        if not message:
+            return api_response(success=False, message="Message is required.", status_code=status.HTTP_400_BAD_REQUEST)
+
+        sent_count = NotificationService.send_broadcast_notification(
+            title=title,
+            message=message,
+            audience=audience,
+            author=request.user
+        )
+
+        aud_clean = str(audience).upper().strip().replace(' ', '_')
+        if aud_clean in ['TEACHERS', 'TEACHER']:
+            aud_label = "Teachers"
+        elif aud_clean in ['STUDENTS', 'STUDENT']:
+            aud_label = "Students"
+        else:
+            aud_label = "Teachers & Students"
+
+        return api_response(
+            success=True,
+            message=f"Notification sent successfully to {sent_count} {aud_label}.",
+            data={
+                "title": title,
+                "message": message,
+                "audience": aud_clean,
+                "recipients_count": sent_count
+            },
+            status_code=status.HTTP_201_CREATED
+        )
 
 
 # ==========================================
@@ -3263,6 +3347,62 @@ class AdminUsersListView(generics.ListAPIView):
     ordering = ['-date_joined']
     queryset = User.objects.all()
 
+class AdminUserDetailView(APIView):
+    permission_classes = [IsAdmin]
+
+    def patch(self, request, id):
+        try:
+            user = User.objects.get(id=id)
+        except User.DoesNotExist:
+            raise NotFound("User not found.")
+
+        if user.role != User.Role.STUDENT:
+            return api_response(
+                success=False,
+                message="Only student accounts can be activated or deactivated. Teacher and Admin accounts cannot be modified.",
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+
+        if 'is_active' in request.data:
+            val = request.data['is_active']
+            user.is_active = val if isinstance(val, bool) else str(val).lower() in ['true', '1', 'active']
+            user.save(update_fields=['is_active'])
+
+        return api_response(
+            success=True,
+            message=f"Student account {'activated' if user.is_active else 'deactivated'} successfully.",
+            data=UserDetailSerializer(user).data
+        )
+
+class AdminUserToggleStatusView(APIView):
+    permission_classes = [IsAdmin]
+
+    def post(self, request, id):
+        try:
+            user = User.objects.get(id=id)
+        except User.DoesNotExist:
+            raise NotFound("User not found.")
+
+        if user.role != User.Role.STUDENT:
+            return api_response(
+                success=False,
+                message="Only student accounts can be activated or deactivated. Teacher and Admin accounts cannot be modified.",
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+
+        if 'is_active' in request.data:
+            val = request.data['is_active']
+            user.is_active = val if isinstance(val, bool) else str(val).lower() in ['true', '1', 'active']
+        else:
+            user.is_active = not user.is_active
+
+        user.save(update_fields=['is_active'])
+        return api_response(
+            success=True,
+            message=f"Student account {'activated' if user.is_active else 'deactivated'} successfully.",
+            data={"id": str(user.id), "is_active": user.is_active}
+        )
+
 class StudentViewSet(viewsets.ModelViewSet):
     """
     ====================================================================
@@ -3310,9 +3450,17 @@ class StudentViewSet(viewsets.ModelViewSet):
         lookup_url_kwarg = self.lookup_url_kwarg or self.lookup_field
         lookup_val = self.kwargs.get(lookup_url_kwarg)
         if lookup_val:
-            obj = StudentProfile.objects.select_related('user').filter(
-                Q(id=lookup_val) | Q(user__id=lookup_val)
-            ).first()
+            raw_str = str(lookup_val).strip()
+            clean_val = raw_str.replace(' ', '').replace('-', '')
+            try:
+                parsed_uuid = uuid.UUID(clean_val)
+                obj = StudentProfile.objects.select_related('user').filter(
+                    Q(id=parsed_uuid) | Q(user__id=parsed_uuid)
+                ).first()
+            except (ValueError, AttributeError):
+                obj = StudentProfile.objects.select_related('user').filter(
+                    Q(id=raw_str) | Q(user__id=raw_str)
+                ).first()
             if obj:
                 self.check_object_permissions(self.request, obj)
                 return obj
@@ -3390,9 +3538,26 @@ class StudentViewSet(viewsets.ModelViewSet):
     def update(self, request, *args, **kwargs):
         partial = kwargs.pop('partial', False)
         instance = self.get_object()
+        if instance.user and instance.user.role != User.Role.STUDENT:
+            return api_response(
+                success=False,
+                message="Only student accounts can be modified here.",
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
         if 'is_active' in request.data and instance.user:
-            instance.user.is_active = bool(request.data['is_active'])
+            val = request.data['is_active']
+            is_act = val if isinstance(val, bool) else str(val).lower() in ['true', '1', 'active']
+            instance.user.is_active = is_act
             instance.user.save(update_fields=['is_active'])
+        elif 'status' in request.data and instance.user:
+            val = str(request.data['status']).upper().strip()
+            if val in ['ACTIVE', 'TRUE', '1', 'GOOD STANDING']:
+                instance.user.is_active = True
+                instance.user.save(update_fields=['is_active'])
+            elif val in ['INACTIVE', 'DEACTIVATED', 'SUSPENDED', 'FALSE', '0']:
+                instance.user.is_active = False
+                instance.user.save(update_fields=['is_active'])
+
         serializer = self.get_serializer(instance, data=request.data, partial=partial)
         serializer.is_valid(raise_exception=True)
         serializer.save()
@@ -3432,13 +3597,106 @@ class StudentViewSet(viewsets.ModelViewSet):
         )
         return api_response(success=True, message="Notice sent to student successfully.")
 
-    @action(detail=True, methods=['post'], url_path='deactivate')
+    @action(detail=True, methods=['post', 'patch', 'put', 'get'], url_path='deactivate')
     def deactivate_student(self, request, id=None):
         instance = self.get_object()
-        if instance.user:
-            instance.user.is_active = False
-            instance.user.save(update_fields=['is_active'])
-        return api_response(success=True, message="Student account deactivated successfully.")
+        if not instance.user:
+            return api_response(success=False, message="User not found for this student.", status_code=status.HTTP_400_BAD_REQUEST)
+        if instance.user.role != User.Role.STUDENT:
+            return api_response(
+                success=False,
+                message="Only student accounts can be deactivated. Teacher and Admin accounts cannot be deactivated.",
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+        instance.user.is_active = False
+        instance.user.save(update_fields=['is_active'])
+
+        admin_user = request.user if (request.user and request.user.is_authenticated) else None
+        AuditLog.objects.create(
+            actor=admin_user,
+            action='STUDENT_DEACTIVATED',
+            object_type='StudentProfile',
+            object_id=str(instance.id),
+            description=f"Student account {instance.user.email} deactivated by Super Admin.",
+            metadata={"student_id": str(instance.id), "student_email": instance.user.email, "is_active": False}
+        )
+        serializer = self.get_serializer(instance)
+        return api_response(success=True, message="Student account deactivated successfully.", data=serializer.data)
+
+    @action(detail=True, methods=['post', 'patch', 'put', 'get'], url_path='activate')
+    def activate_student(self, request, id=None):
+        instance = self.get_object()
+        if not instance.user:
+            return api_response(success=False, message="User not found for this student.", status_code=status.HTTP_400_BAD_REQUEST)
+        if instance.user.role != User.Role.STUDENT:
+            return api_response(
+                success=False,
+                message="Only student accounts can be activated. Teacher accounts cannot be modified here.",
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+        instance.user.is_active = True
+        instance.user.save(update_fields=['is_active'])
+
+        admin_user = request.user if (request.user and request.user.is_authenticated) else None
+        AuditLog.objects.create(
+            actor=admin_user,
+            action='STUDENT_ACTIVATED',
+            object_type='StudentProfile',
+            object_id=str(instance.id),
+            description=f"Student account {instance.user.email} activated by Super Admin.",
+            metadata={"student_id": str(instance.id), "student_email": instance.user.email, "is_active": True}
+        )
+        serializer = self.get_serializer(instance)
+        return api_response(success=True, message="Student account activated successfully.", data=serializer.data)
+
+    @action(detail=True, methods=['post', 'patch', 'put'], url_path='status')
+    def update_status(self, request, id=None):
+        instance = self.get_object()
+        if not instance.user:
+            return api_response(success=False, message="User not found for this student.", status_code=status.HTTP_400_BAD_REQUEST)
+        if instance.user.role != User.Role.STUDENT:
+            return api_response(
+                success=False,
+                message="Only student accounts can be activated or deactivated. Teacher accounts cannot be modified here.",
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+
+        new_is_active = None
+        if 'is_active' in request.data:
+            val = request.data['is_active']
+            new_is_active = val if isinstance(val, bool) else str(val).lower() in ['true', '1', 'active']
+        elif 'status' in request.data:
+            val = str(request.data['status']).upper().strip()
+            if val in ['ACTIVE', 'TRUE', '1', 'GOOD STANDING']:
+                new_is_active = True
+            elif val in ['INACTIVE', 'DEACTIVATED', 'SUSPENDED', 'FALSE', '0']:
+                new_is_active = False
+
+        if new_is_active is None:
+            new_is_active = not instance.user.is_active
+
+        instance.user.is_active = new_is_active
+        instance.user.save(update_fields=['is_active'])
+
+        admin_user = request.user if (request.user and request.user.is_authenticated) else None
+        AuditLog.objects.create(
+            actor=admin_user,
+            action='STUDENT_ACTIVATED' if new_is_active else 'STUDENT_DEACTIVATED',
+            object_type='StudentProfile',
+            object_id=str(instance.id),
+            description=f"Student status updated to {'Active' if new_is_active else 'Inactive'}.",
+            metadata={"student_id": str(instance.id), "student_email": instance.user.email, "is_active": new_is_active}
+        )
+        serializer = self.get_serializer(instance)
+        return api_response(
+            success=True,
+            message=f"Student account {'activated' if new_is_active else 'deactivated'} successfully.",
+            data=serializer.data
+        )
+
+    @action(detail=True, methods=['post', 'patch', 'put'], url_path='toggle-status')
+    def toggle_status(self, request, id=None):
+        return self.update_status(request, id=id)
 
     def destroy(self, request, *args, **kwargs):
         instance = self.get_object()
@@ -3924,13 +4182,28 @@ class AdminAnnouncementsListView(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         user = self.request.user if self.request.user and self.request.user.is_authenticated else None
-        serializer.save(author=user)
+        announcement = serializer.save(author=user)
+        if announcement.status == PlatformAnnouncement.Status.PUBLISHED:
+            NotificationService.send_broadcast_notification(
+                title=announcement.title,
+                message=announcement.description or announcement.title,
+                audience=announcement.audience,
+                author=user,
+                notification_type='SYSTEM'
+            )
 
     @action(detail=True, methods=['post', 'patch'])
     def publish(self, request, pk=None):
         announcement = self.get_object()
         announcement.status = PlatformAnnouncement.Status.PUBLISHED
         announcement.save(update_fields=['status', 'updated_at'])
+        NotificationService.send_broadcast_notification(
+            title=announcement.title,
+            message=announcement.description or announcement.title,
+            audience=announcement.audience,
+            author=request.user,
+            notification_type='SYSTEM'
+        )
         serializer = self.get_serializer(announcement)
         return Response({
             "success": True,
@@ -4554,4 +4827,6 @@ class AdminSendClassRemindersView(APIView):
             message=f"Dispatched {sent_count} class reminders for classes in the next {window_minutes} minutes.",
             data={"reminders_sent": sent_count, "window_minutes": window_minutes}
         )
+
+
 

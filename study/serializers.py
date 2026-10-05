@@ -188,6 +188,7 @@ class StudentProfileSerializer(serializers.ModelSerializer):
     email = serializers.EmailField(source='user.email', read_only=True)
     phone_number = serializers.CharField(source='user.phone_number', required=False)
     profile_photo = serializers.ImageField(source='user.profile_photo', required=False, allow_null=True)
+    is_active = serializers.BooleanField(source='user.is_active', required=False)
 
     student_code = serializers.SerializerMethodField()
     avatar_initial = serializers.SerializerMethodField()
@@ -212,7 +213,7 @@ class StudentProfileSerializer(serializers.ModelSerializer):
         model = StudentProfile
         fields = (
             'id', 'student_code', 'avatar_initial', 'first_name', 'last_name', 'full_name',
-            'email', 'phone_number', 'profile_photo',
+            'email', 'phone_number', 'profile_photo', 'is_active',
             'joined', 'date_joined', 'enrollments', 'enrollments_count', 'status',
             'board', 'grade_display',
             'contact_requests', 'contact_requests_count', 'hours_learned', 'kyc_standing',

@@ -42,6 +42,7 @@ from .views import (
 
     # Notifications
     NotificationListView, NotificationMarkReadView, NotificationMarkAllReadView,
+    AdminSendNotificationView,
 
     # Reviews
     BatchReviewCreateView, ReviewDetailView,
@@ -54,7 +55,7 @@ from .views import (
 
     # Admin Panel
     AdminDashboardStatsView, AdminDashboardActivityView, AdminDashboardSearchView,
-    AdminUsersListView, AdminTeacherVerificationsListView,
+    AdminUsersListView, AdminUserDetailView, AdminUserToggleStatusView, AdminTeacherVerificationsListView,
     AdminTeacherVerificationDetailView, AdminTeacherVerificationApproveView,
     AdminTeacherVerificationRejectView, AdminConnectionsListView,
     AdminBatchesListView, AdminEnrollmentsListView, AdminAnnouncementsListView, AdminPromotionalBannersViewSet,
@@ -68,6 +69,7 @@ router = DefaultRouter()
 router.register(r'blocks', UserBlockViewSet, basename='user-blocks')
 router.register(r'teacher/batches', TeacherBatchViewSet, basename='teacher-batches')
 router.register(r'students', StudentViewSet, basename='students')
+router.register(r'admin/students', StudentViewSet, basename='admin-students')
 router.register(r'admin/enrollments', AdminEnrollmentsListView, basename='admin-enrollments')
 router.register(r'admin/announcements', AdminAnnouncementsListView, basename='admin-announcements')
 router.register(r'announcements-promotions', AdminAnnouncementsListView, basename='announcements-promotions')
@@ -127,6 +129,7 @@ urlpatterns = [
     path('batches/', BatchPublicListView.as_view(), name='batch-public-list'),
     path('batches/<uuid:id>/', BatchPublicDetailView.as_view(), name='batch-public-detail'),
     path('batches/<uuid:batch_id>/announcements/', BatchAnnouncementView.as_view(), name='batch-announcements'),
+    path('teacher/batches/<uuid:batch_id>/announcements/', BatchAnnouncementView.as_view(), name='teacher-batch-announcements'),
     path('batches/<uuid:batch_id>/enroll/', BatchEnrollRequestView.as_view(), name='batch-enroll'),
 
     # Classes & Attendance
@@ -160,6 +163,11 @@ urlpatterns = [
     path('notifications/', NotificationListView.as_view(), name='notification-list'),
     path('notifications/<uuid:id>/read/', NotificationMarkReadView.as_view(), name='notification-mark-read'),
     path('notifications/read-all/', NotificationMarkAllReadView.as_view(), name='notification-read-all'),
+    path('admin/notifications/', NotificationListView.as_view(), name='admin-notifications-list'),
+    path('admin/notifications/<uuid:id>/read/', NotificationMarkReadView.as_view(), name='admin-notification-mark-read'),
+    path('admin/notifications/read-all/', NotificationMarkAllReadView.as_view(), name='admin-notification-read-all'),
+    path('admin/notifications/send/', AdminSendNotificationView.as_view(), name='admin-send-notification'),
+    path('admin/notifications/broadcast/', AdminSendNotificationView.as_view(), name='admin-broadcast-notification'),
 
     # Reviews
     path('batches/<uuid:batch_id>/reviews/', BatchReviewCreateView.as_view(), name='batch-review-create'),
@@ -178,12 +186,25 @@ urlpatterns = [
     path('admin/dashboard/activity/', AdminDashboardActivityView.as_view(), name='admin-dashboard-activity'),
     path('admin/dashboard/search/', AdminDashboardSearchView.as_view(), name='admin-dashboard-search'),
     path('admin/users/', AdminUsersListView.as_view(), name='admin-users-list'),
+    path('admin/users/<uuid:id>/', AdminUserDetailView.as_view(), name='admin-user-detail'),
+    path('admin/users/<uuid:id>/toggle-status/', AdminUserToggleStatusView.as_view(), name='admin-user-toggle-status'),
+
     path('admin/teachers/', TeacherViewSet.as_view({'get': 'list', 'post': 'create','delete':'destroy'}), name='admin-teachers-list'),
     path('admin/teachers/<uuid:id>/', TeacherViewSet.as_view({'get': 'retrieve', 'put': 'update', 'patch': 'partial_update', 'delete': 'destroy'}), name='admin-teacher-detail'),
     path('admin/teachers/<uuid:id>/approve/', AdminTeacherVerificationApproveView.as_view(), name='admin-teacher-approve'),
     path('admin/teachers/<uuid:id>/reject/', AdminTeacherVerificationRejectView.as_view(), name='admin-teacher-reject'),
-    path('admin/students/', StudentViewSet.as_view({'get': 'list', 'post': 'create','delete':'destroy'}), name='admin-students-list'),
-    path('admin/students/<uuid:id>/', StudentViewSet.as_view({'get': 'retrieve', 'put': 'update', 'patch': 'partial_update', 'delete': 'destroy'}), name='admin-student-detail'),
+
+    path('admin/students/<str:id>/deactivate/', StudentViewSet.as_view({'post': 'deactivate_student', 'patch': 'deactivate_student', 'put': 'deactivate_student', 'get': 'deactivate_student'}), name='admin-student-deactivate-action'),
+    path('admin/students/<str:id>/activate/', StudentViewSet.as_view({'post': 'activate_student', 'patch': 'activate_student', 'put': 'activate_student', 'get': 'activate_student'}), name='admin-student-activate-action'),
+    path('admin/students/<str:id>/status/', StudentViewSet.as_view({'post': 'update_status', 'patch': 'update_status', 'put': 'update_status'}), name='admin-student-status-action'),
+    path('admin/students/<str:id>/toggle-status/', StudentViewSet.as_view({'post': 'toggle_status', 'patch': 'toggle_status', 'put': 'toggle_status'}), name='admin-student-toggle-status-action'),
+    path('admin/students/<str:id>/notice/', StudentViewSet.as_view({'post': 'send_notice'}), name='admin-student-notice-action'),
+    path('admin/students/<str:id>/remarks/', StudentViewSet.as_view({'post': 'add_remark'}), name='admin-student-remarks-action'),
+
+    path('students/<str:id>/deactivate/', StudentViewSet.as_view({'post': 'deactivate_student', 'patch': 'deactivate_student', 'put': 'deactivate_student', 'get': 'deactivate_student'}), name='student-deactivate-action'),
+    path('students/<str:id>/activate/', StudentViewSet.as_view({'post': 'activate_student', 'patch': 'activate_student', 'put': 'activate_student', 'get': 'activate_student'}), name='student-activate-action'),
+    path('students/<str:id>/status/', StudentViewSet.as_view({'post': 'update_status', 'patch': 'update_status', 'put': 'update_status'}), name='student-status-action'),
+    path('students/<str:id>/toggle-status/', StudentViewSet.as_view({'post': 'toggle_status', 'patch': 'toggle_status', 'put': 'toggle_status'}), name='student-toggle-status-action'),
     path('admin/teacher-verifications/', AdminTeacherVerificationsListView.as_view(), name='admin-teacher-verifications-list'),
     path('admin/teacher-verifications/<uuid:id>/', AdminTeacherVerificationDetailView.as_view(), name='admin-teacher-verification-detail'),
     path('admin/teacher-verifications/<uuid:id>/approve/', AdminTeacherVerificationApproveView.as_view(), name='admin-teacher-verification-approve'),
