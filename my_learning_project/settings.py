@@ -7,8 +7,12 @@ import os
 from pathlib import Path
 from datetime import timedelta
 
+
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
+
+# Load environment variables from .env file if present
+
 
 # SECURITY WARNING: keep the secret key used in production secret!
 SECRET_KEY = "django-insecure-zuw)gns$mwk$$&(+ohsi@y9gq+@mqs(zh&3sqffg^+9hmj+*z="
@@ -154,26 +158,33 @@ CORS_ALLOW_ALL_ORIGINS = True
 CORS_ALLOW_CREDENTIALS = True
 
 # Email configuration
-# EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
-# EMAIL_HOST = "smtp.gmail.com"
-# EMAIL_PORT = 587
-# EMAIL_HOST_USER = "ddpldeveloper@gmail.com"
-# EMAIL_HOST_PASSWORD = "dowe unfv vtoy sily"
-# EMAIL_USE_TLS = True
-# DEFAULT_FROM_EMAIL = "ddpldeveloperahul@gmail.com"
-
-
 EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
-
-EMAIL_HOST = os.getenv("EMAIL_HOST", "smtp.gmail.com")
-EMAIL_PORT = int(os.getenv("EMAIL_PORT", "587"))
-EMAIL_HOST_USER = os.getenv("EMAIL_HOST_USER", "ddpldeveloper@gmail.com")
-EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD", "dowe unfv vtoy sily")
-
+EMAIL_HOST = "smtp.gmail.com"
+EMAIL_PORT = 587
+EMAIL_HOST_USER = "ddpldeveloper@gmail.com"
+EMAIL_HOST_PASSWORD = "dowe unfv vtoy sily"
 EMAIL_USE_TLS = True
-EMAIL_USE_SSL = False
+DEFAULT_FROM_EMAIL = "ddpldeveloperahul@gmail.com"
 
-DEFAULT_FROM_EMAIL = os.getenv("DEFAULT_FROM_EMAIL", "ddpldeveloper@gmail.com")
+
+# import os
+
+# =========================================================
+# EMAIL / SMTP CONFIGURATION
+# =========================================================
+
+# EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
+
+# EMAIL_HOST = os.getenv("EMAIL_HOST", "smtp.gmail.com")
+# EMAIL_PORT = int(os.getenv("EMAIL_PORT", "587"))
+
+# EMAIL_HOST_USER = os.getenv("EMAIL_HOST_USER", "ddpldeveloper@gmail.com")
+# EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD", "dowe unfv vtoy sily")
+
+# EMAIL_USE_TLS = os.getenv("EMAIL_USE_TLS", "True").lower() in ("true", "1", "yes")
+# EMAIL_USE_SSL = os.getenv("EMAIL_USE_SSL", "False").lower() in ("true", "1", "yes")
+
+# DEFAULT_FROM_EMAIL = os.getenv("DEFAULT_FROM_EMAIL", EMAIL_HOST_USER)
 # File Upload limits
 MAX_VIDEO_UPLOAD_SIZE = int(os.environ.get("MAX_VIDEO_UPLOAD_SIZE", 524288000))  # 500 MB
 MAX_DOCUMENT_UPLOAD_SIZE = int(os.environ.get("MAX_DOCUMENT_UPLOAD_SIZE", 20971520))  # 20 MB
