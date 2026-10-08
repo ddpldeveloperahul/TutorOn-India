@@ -922,7 +922,7 @@ This section contains all client endpoints consumed by the Flutter/React Native/
   }
   ```
 
-#### 🔹 6. Forgot Password & Reset Password
+#### 🔹 6. Forgot Password & Reset Password (Unauthenticated)
 - **Forgot Password**: `POST /api/v1/auth/forgot-password/`
   ```json
   {
@@ -932,12 +932,23 @@ This section contains all client endpoints consumed by the Flutter/React Native/
 - **Reset Password**: `POST /api/v1/auth/reset-password/`
   ```json
   {
-    "token": "reset-uuid-token-from-email",
+    "otp": "673152",
     "new_password": "NewSecurePassword@123"
   }
   ```
 
-#### 🔹 7. Get / Update Current User Profile (`/auth/me/`)
+#### 🔹 7. Change Password (Authenticated User)
+- **URL**: `POST /api/v1/auth/change-password/`
+- **Headers**: `Authorization: Bearer <JWT>`
+- **Request Payload**:
+  ```json
+  {
+    "old_password": "CurrentPassword@123",
+    "new_password": "NewSecurePassword@123"
+  }
+  ```
+
+#### 🔹 8. Get / Update Current User Profile (`/auth/me/`)
 - **URL**: `GET /api/v1/auth/me/` & `PATCH /api/v1/auth/me/`
 - **Headers**: `Authorization: Bearer <JWT>`
 - **Patch Request Payload**:

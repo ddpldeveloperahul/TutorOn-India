@@ -7,7 +7,7 @@ from .views import (
     StudentRegistrationView, TeacherRegistrationView, UnifiedRegistrationView,
     CustomTokenObtainPairView, CustomTokenRefreshView, LogoutView,
     VerifyEmailView, ResendVerificationView, ForgotPasswordView, ResetPasswordView,
-    MeView, UserBlockViewSet,
+    ChangePasswordView, MeView, UserBlockViewSet,
 
     # Students & Teachers
     StudentViewSet, TeacherViewSet,
@@ -103,6 +103,7 @@ urlpatterns = [
     # path('auth/generate-otp/', ResendVerificationView.as_view(), name='generate-otp'),
     path('auth/forgot-password/', ForgotPasswordView.as_view(), name='forgot-password'),
     path('auth/reset-password/', ResetPasswordView.as_view(), name='reset-password'),
+    path('auth/change-password/', ChangePasswordView.as_view(), name='change-password'),
     path('auth/me/', MeView.as_view(), name='auth-me'),
 
     # Student Area

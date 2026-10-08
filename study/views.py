@@ -50,7 +50,7 @@ from .serializers import (
     StudentRegistrationSerializer, TeacherRegistrationSerializer,
     UnifiedRegistrationSerializer,
     CustomTokenObtainPairSerializer, PasswordResetRequestSerializer,
-    PasswordResetConfirmSerializer, EmailVerificationSerializer, UserBlockSerializer,
+    PasswordResetConfirmSerializer, ChangePasswordSerializer, EmailVerificationSerializer, UserBlockSerializer,
     StudentProfileSerializer, StudentSafePublicSerializer,
     TeacherProfileSerializer, TeacherPublicSearchSerializer,
     TeacherVerificationSubmitSerializer, TeacherVerificationAdminSerializer,
@@ -66,6 +66,7 @@ from .serializers import (
     PaymentSerializer, PaymentInitiateSerializer, PaymentVerifySerializer,
     AuditLogSerializer
 )
+from .emails import get_otp_email_content
 
 logger = logging.getLogger(__name__)
 
@@ -232,16 +233,15 @@ class AuthService:
         print(f"Valid For: 15 minutes (Expires at: {expires_at.strftime('%H:%M:%S')})")
         print("=" * 60 + "\n")
 
-        subject = "Your TutorOn India Verification OTP"
-        message = (
-            f"Hello {user.first_name},\n\n"
-            f"Your 6-digit email verification OTP is: {otp}\n\n"
-            f"This OTP is valid for 15 minutes. Please enter this OTP in the app to verify your account.\n\n"
-            f"Team TutorOn India"
+        subject, message, html_message = get_otp_email_content(
+            user_name=user.first_name or user.get_full_name(),
+            otp=otp,
+            purpose="verify_email",
+            valid_minutes=15
         )
         try:
             from_email = getattr(settings, 'DEFAULT_FROM_EMAIL', 'TutorOn India <noreply@tutoron.in>')
-            send_mail(subject, message, from_email, [user.email], fail_silently=True)
+            send_mail(subject, message, from_email, [user.email], html_message=html_message, fail_silently=True)
         except Exception:
             pass
         return otp
@@ -273,28 +273,63 @@ class AuthService:
 
     @staticmethod
     def request_password_reset(email):
-        user = User.objects.filter(email=email.lower().strip(), is_active=True).first()
+        user = User.objects.filter(email=email.lower().strip()).first()
         if not user:
-            return True
-        token_str = secrets.token_urlsafe(32)
-        expires_at = timezone.now() + timedelta(hours=2)
-        PasswordResetToken.objects.create(user=user, token=token_str, expires_at=expires_at)
-        subject = "Reset your TutorOn India Password"
-        message = f"Hello {user.first_name},\n\nUse token below to reset password:\n{token_str}\n\nTeam TutorOn India"
+            raise ValidationError("User with this email address does not exist.")
+        if not user.is_active:
+            raise ValidationError("This account is deactivated. Please contact support.")
+        # Invalidate previous unused reset OTPs for this user
+        PasswordResetToken.objects.filter(user=user, is_used=False).update(is_used=True)
+
+        # Generate a unique 6-digit numeric OTP
+        otp = None
+        for _ in range(20):
+            candidate = f"{secrets.randbelow(900000) + 100000}"
+            if not PasswordResetToken.objects.filter(token=candidate, is_used=False).exists():
+                otp = candidate
+                break
+        if not otp:
+            otp = f"{secrets.randbelow(900000) + 100000}"
+
+        expires_at = timezone.now() + timedelta(minutes=15)
+        PasswordResetToken.objects.filter(token=otp).delete()
+        PasswordResetToken.objects.create(user=user, token=otp, expires_at=expires_at)
+
+        # Print prominently on the server console (Safe for Windows console encoding)
+        print("\n" + "=" * 60)
+        print("[PASSWORD RESET OTP] - TUTORON INDIA")
+        print(f"User : {user.get_full_name()} ({user.role})")
+        print(f"Email: {user.email}")
+        print(f"YOUR 6-DIGIT OTP IS:  >> {otp} <<")
+        print(f"Valid For: 15 minutes (Expires at: {expires_at.strftime('%H:%M:%S')})")
+        print("=" * 60 + "\n")
+
+        subject, message, html_message = get_otp_email_content(
+            user_name=user.first_name or user.get_full_name(),
+            otp=otp,
+            purpose="reset_password",
+            valid_minutes=15
+        )
         try:
-            send_mail(subject, message, settings.DEFAULT_FROM_EMAIL, [user.email], fail_silently=True)
+            from_email = getattr(settings, 'DEFAULT_FROM_EMAIL', 'TutorOn India <noreply@tutoron.in>')
+            send_mail(subject, message, from_email, [user.email], html_message=html_message, fail_silently=True)
         except Exception:
             pass
         return True
 
     @staticmethod
-    def reset_password(token_str, new_password):
-        try:
-            token = PasswordResetToken.objects.select_related('user').get(token=token_str)
-        except PasswordResetToken.DoesNotExist:
-            raise ValidationError("Invalid reset token.")
+    def reset_password(token_str, new_password, email=None):
+        token_str = str(token_str).strip()
+        qs = PasswordResetToken.objects.select_related('user').filter(token=token_str)
+        if email:
+            token = qs.filter(user__email=email.lower().strip()).order_by('-created_at').first()
+        else:
+            token = qs.order_by('-created_at').first()
+
+        if not token:
+            raise ValidationError("Invalid reset OTP. Please check the OTP or request a new one.")
         if not token.is_valid():
-            raise ValidationError("Reset token has expired or already been used.")
+            raise ValidationError("Reset OTP has expired or already been used. Please request a new OTP.")
         token.is_used = True
         token.save()
         user = token.user
@@ -1106,8 +1141,25 @@ class ForgotPasswordView(APIView):
     def post(self, request):
         serializer = PasswordResetRequestSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        AuthService.request_password_reset(serializer.validated_data['email'])
-        return api_response(success=True, message="If an account exists, password reset instructions were sent.")
+        email = serializer.validated_data['email'].lower().strip()
+        user = User.objects.filter(email=email).first()
+        if not user:
+            return api_response(
+                success=False,
+                message="User with this email address does not exist.",
+                status_code=status.HTTP_404_NOT_FOUND
+            )
+        if not user.is_active:
+            return api_response(
+                success=False,
+                message="This account is deactivated. Please contact support.",
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+        AuthService.request_password_reset(email)
+        return api_response(
+            success=True,
+            message="Password reset OTP has been sent to your email."
+        )
 
 class ResetPasswordView(APIView):
     permission_classes = [AllowAny]
@@ -1115,8 +1167,20 @@ class ResetPasswordView(APIView):
     def post(self, request):
         serializer = PasswordResetConfirmSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        AuthService.reset_password(serializer.validated_data['token'], serializer.validated_data['new_password'])
+        token_or_otp = serializer.validated_data.get('otp') or serializer.validated_data.get('token')
+        email = serializer.validated_data.get('email')
+        AuthService.reset_password(token_or_otp, serializer.validated_data['new_password'], email=email)
         return api_response(success=True, message="Password reset successfully. You may now log in.")
+
+class ChangePasswordView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        serializer = ChangePasswordSerializer(data=request.data, context={'request': request})
+        serializer.is_valid(raise_exception=True)
+        request.user.set_password(serializer.validated_data['new_password'])
+        request.user.save()
+        return api_response(success=True, message="Password changed successfully.")
 
 class MeView(APIView):
     permission_classes = [IsAuthenticated]

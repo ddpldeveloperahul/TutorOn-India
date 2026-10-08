@@ -151,8 +151,33 @@ class PasswordResetRequestSerializer(serializers.Serializer):
     email = serializers.EmailField(required=True)
 
 class PasswordResetConfirmSerializer(serializers.Serializer):
-    token = serializers.CharField(required=True)
+    token = serializers.CharField(required=False, max_length=128)
+    otp = serializers.CharField(required=False, max_length=128)
+    email = serializers.EmailField(required=False)
     new_password = serializers.CharField(required=True, min_length=8)
+
+    def validate(self, attrs):
+        otp_val = attrs.get('otp') or attrs.get('token')
+        if not otp_val:
+            raise serializers.ValidationError({"otp": "Reset OTP (or token) is required."})
+        attrs['otp'] = str(otp_val).strip()
+        attrs['token'] = attrs['otp']
+        return attrs
+
+class ChangePasswordSerializer(serializers.Serializer):
+    old_password = serializers.CharField(required=True, write_only=True)
+    new_password = serializers.CharField(required=True, min_length=8, write_only=True)
+
+    def validate_old_password(self, value):
+        user = self.context.get('request').user
+        if not user or not user.check_password(value):
+            raise serializers.ValidationError("Old password is incorrect.")
+        return value
+
+    def validate(self, attrs):
+        if attrs.get('old_password') == attrs.get('new_password'):
+            raise serializers.ValidationError({"new_password": "New password cannot be the same as old password."})
+        return attrs
 
 class EmailVerificationSerializer(serializers.Serializer):
     email = serializers.EmailField(required=False)
@@ -1514,7 +1539,7 @@ class AuditLogSerializer(serializers.ModelSerializer):
 
     def get_admin_operator(self, obj):
         name = (obj.actor.get_full_name() if obj.actor else None) or "Super Admin"
-        email = (obj.actor.email if obj.actor else None) or "sudhanshu@tutoron.in"
+        email = (obj.actor.email if obj.actor else None) or "rahul@tutoron.in"
         ip = obj.ip_address or "103.21.144.18"
         location = (obj.metadata and obj.metadata.get('location')) or "New Delhi, India"
         return {

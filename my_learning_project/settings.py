@@ -154,13 +154,13 @@ CORS_ALLOW_ALL_ORIGINS = True
 CORS_ALLOW_CREDENTIALS = True
 
 # Email configuration
-EMAIL_BACKEND = os.environ.get("EMAIL_BACKEND", "django.core.mail.backends.console.EmailBackend")
-EMAIL_HOST = os.environ.get("EMAIL_HOST", "smtp.gmail.com")
-EMAIL_PORT = int(os.environ.get("EMAIL_PORT", 587))
-EMAIL_HOST_USER = os.environ.get("EMAIL_HOST_USER", "")
-EMAIL_HOST_PASSWORD = os.environ.get("EMAIL_HOST_PASSWORD", "")
-EMAIL_USE_TLS = os.environ.get("EMAIL_USE_TLS", "True").lower() in ("true", "1")
-DEFAULT_FROM_EMAIL = os.environ.get("DEFAULT_FROM_EMAIL", "TutorOn India <noreply@tutoron.in>")
+EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
+EMAIL_HOST = "smtp.gmail.com"
+EMAIL_PORT = 587
+EMAIL_HOST_USER = "ddpldeveloper@gmail.com"
+EMAIL_HOST_PASSWORD = "dowe unfv vtoy sily"
+EMAIL_USE_TLS = True
+DEFAULT_FROM_EMAIL = "ddpldeveloperahul@gmail.com"
 
 # File Upload limits
 MAX_VIDEO_UPLOAD_SIZE = int(os.environ.get("MAX_VIDEO_UPLOAD_SIZE", 524288000))  # 500 MB
